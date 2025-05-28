@@ -1,0 +1,6 @@
+# requirements.txt
+streamlit
+requests
+sxtwl
+plotly
+pandas
