@@ -3,25 +3,46 @@
 import httpx # Using httpx for HTTP requests, you can use 'requests' as well
 import json
 from typing import Dict
-
+import sxtwl
 # You might have a more sophisticated Bazi calculation utility.
 # For now, calculate_simple_bazi is a placeholder.
 # If you have a real Bazi library (like sxtwlpy or a custom one), integrate it here.
-TIAN_GAN = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
-DI_ZHI = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
+# TIAN_GAN = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
+# DI_ZHI = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
 
-# Simplified Bazi calculation - placeholder, replace with accurate logic
-def get_gan_zhi(year, val_offset_gan, val_offset_zhi):
-    # This is an extremely naive placeholder and not astrologically correct.
-    # Replace with a proper Bazi calculation library or algorithm.
-    gan_idx = (year - val_offset_gan) % 10
-    zhi_idx = (year - val_offset_zhi) % 12
-    return f"{TIAN_GAN[gan_idx]}{DI_ZHI[zhi_idx]}"
+# # Simplified Bazi calculation - placeholder, replace with accurate logic
+# def get_gan_zhi(year, val_offset_gan, val_offset_zhi):
+#     # This is an extremely naive placeholder and not astrologically correct.
+#     # Replace with a proper Bazi calculation library or algorithm.
+#     gan_idx = (year - val_offset_gan) % 10
+#     zhi_idx = (year - val_offset_zhi) % 12
+#     return f"{TIAN_GAN[gan_idx]}{DI_ZHI[zhi_idx]}"
 
 class DeepSeekBaziReport:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.base_url = "https://api.deepseek.com/v1" # Official API endpoint
+
+        # 八字基础数据（用于本地计算）
+        self.Gan = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
+        self.Zhi = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
+
+        # 五行映射 (这些映射信息可以保留，因为AI可能需要它们进行分析，即使我们不本地计算)
+        self.gan_elements = {
+            "甲": "木", "乙": "木", "丙": "火", "丁": "火", "戊": "土",
+            "己": "土", "庚": "金", "辛": "金", "壬": "水", "癸": "水"
+        }
+        self.zhi_elements = {
+            "子": "水", "丑": "土", "寅": "木", "卯": "木", "辰": "土",
+            "巳": "火", "午": "火", "未": "土", "申": "金", "酉": "金",
+            "戌": "土", "亥": "水"
+        }
+        self.zhi_hidden_stems = {
+            "子": ["癸"], "丑": ["己", "癸", "辛"], "寅": ["甲", "丙", "戊"],
+            "卯": ["乙"], "辰": ["戊", "乙", "癸"], "巳": ["丙", "庚", "戊"],
+            "午": ["丁", "己"], "未": ["己", "丁", "乙"], "申": ["庚", "壬", "戊"],
+            "酉": ["辛"], "戌": ["戊", "辛", "丁"], "亥": ["壬", "甲"]
+        }
 
     def _call_deepseek_api(self, prompt: str, model: str = "deepseek-chat", temperature: float = 0.7) -> str:
         headers = {
@@ -66,19 +87,31 @@ class DeepSeekBaziReport:
             return f"Error calling DeepSeek API: {str(e)}"
 
     def calculate_simple_bazi(self, year: int, month: int, day: int, hour: int) -> Dict[str, str]:
-        # Placeholder: Replace with a robust Bazi calculation library (e.g., sxtwl, lunisolar)
+        """
+        根据公历日期和时辰计算四柱八字。
+        Args:
+            year (int): 公历年份
+            month (int): 公历月份
+            day (int): 公历日期
+            hour (int): 公历小时 (0-23)，用于计算时柱
+        Returns:
+            dict: 包含四柱干支的字典
+        """
         try:
-            year_gz = get_gan_zhi(year, 4, 4) 
-            month_gz = get_gan_zhi(month, 1, 1) 
-            day_gz = get_gan_zhi(day, 1, 1) 
-            hour_gz = get_gan_zhi(hour // 2, 1, 1) 
+            day_obj = sxtwl.fromSolar(year, month, day) 
 
-            return {
-                "year_gz": year_gz,
-                "month_gz": month_gz,
-                "day_gz": day_gz,
-                "hour_gz": hour_gz
+            yTG = day_obj.getYearGZ()
+            mTG = day_obj.getMonthGZ()
+            dTG = day_obj.getDayGZ()
+            sTG = day_obj.getHourGZ(hour)
+            
+            bazi_info = {
+                "year_gz": self.Gan[yTG.tg] + self.Zhi[yTG.dz],
+                "month_gz": self.Gan[mTG.tg] + self.Zhi[mTG.dz],
+                "day_gz": self.Gan[dTG.tg] + self.Zhi[dTG.dz],
+                "hour_gz": self.Gan[sTG.tg] + self.Zhi[sTG.dz]
             }
+            return bazi_info
         except Exception as e:
             print(f"Error in placeholder Bazi calculation: {e}")
             return {
