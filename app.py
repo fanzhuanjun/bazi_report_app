@@ -8,8 +8,8 @@ import re
 
 # ！！！确保这是整个脚本的第一个 Streamlit 命令！！！
 st.set_page_config(
-    page_title="🔮 DeepSeek 专业八字命理报告",
-    page_icon="🔮",
+    page_title="反转 专业八字命理学报告",
+    page_icon="🎲",
     layout="wide",
     initial_sidebar_state="auto"
 )
@@ -250,8 +250,8 @@ if 'user_inputs' not in st.session_state:
     }
 
 # --- 主页面内容 ---
-st.markdown("<h1 class='app-main-title'>🔮 DeepSeek 专业八字命理报告</h1>", unsafe_allow_html=True)
-st.markdown("欢迎来到专业的八字命理学！请填写您的出生信息，即可获得由AI驱动的深度命理报告。")
+st.markdown("<h1 class='app-main-title'>🎲 反转实验室 专业八字命理报告</h1>", unsafe_allow_html=True)
+st.markdown("欢迎来到反转专业的八字命理学！请填写您的出生信息，即可获得深度命理报告。")
 st.markdown("---")
 
 def clear_all_data_and_rerun():
@@ -490,7 +490,7 @@ if st.session_state.get('report_generated_successfully', False) and st.session_s
     report_filename_part = "免费版" if bazi_display_data['report_type'] == '免费版报告 (简要)' else "付费版"
     
     # Header for download file should be clean Markdown
-    download_file_header = f"""# 🔮 DeepSeek 专业八字命理报告
+    download_file_header = f"""# 🎲 反转 专业八字命理报告
 
 **公历生日**: {bazi_display_data['year']}年{bazi_display_data['month']}月{bazi_display_data['day']}日 {bazi_display_data['hour']}时
 **您的八字**: {bazi_display_data['bazi_str']}
@@ -501,7 +501,7 @@ if st.session_state.get('report_generated_successfully', False) and st.session_s
 """
     download_file_footer = """
 ---
-免责声明：本报告内容基于命理学理论和AI模型生成，仅供娱乐参考，不构成任何决策的最终依据。命理学并非精密科学，请理性看待。
+免责声明：本报告内容基于八字命理学理论，仅供参考，不构成任何决策的最终依据。命理学并非精密科学，请理性看待。
 """
 
     if bazi_display_data['report_type'] == '免费版报告 (简要)':
@@ -552,6 +552,6 @@ if st.session_state.get('report_generated_successfully', False) and st.session_s
 
 st.markdown("---")
 st.markdown(
-    "<div class='disclaimer-box'><strong>免责声明</strong>：本报告内容基于命理学理论和AI模型生成，旨在提供参考与启发，并非预示确定的人生轨迹。命理学作为一种传统文化现象，其解读具有多重维度和不确定性，不应视为精密科学。个人命运的塑造离不开主观能动性与实际行动，请您结合自身情况理性看待报告内容，不宜作为重大人生决策的唯一依据。</div>",
+    "<div class='disclaimer-box'><strong>免责声明</strong>：本报告内容基于八字命理学理论，旨在提供参考与启发，并非预示确定的人生轨迹。命理学作为一种传统文化，其解读具有多重维度和不确定性，不应视为精密科学。个人命运的塑造离不开主观能动性与实际行动，请您结合自身情况理性看待报告内容，不宜作为重大人生决策的唯一依据。</div>",
     unsafe_allow_html=True
 )
