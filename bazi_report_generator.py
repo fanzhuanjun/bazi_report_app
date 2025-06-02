@@ -49,10 +49,13 @@ class DeepSeekBaziReport:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+        system_prompt_content = """你是一位精通中华传统八字命理学的资深专家。在生成报告时，请始终采用娓娓道来的叙述风格，确保语言流畅自然，富有亲和力。对于每一个分析要点，都请用3到5句完整且连贯的句子组成一个流畅的小段落进行深入浅出的阐释，让不了解八字的用户也能轻松理解。
+            """
+
         data = {
             "model": model,
             "messages": [
-                {"role": "system", "content": "你是一位精通中华传统八字命理学的资深专家。在生成报告时，请始终采用娓娓道来的叙述风格，确保语言流畅自然，富有亲和力。对于每一个分析要点，都请用3到5句完整且连贯的句子组成一个小段落进行深入浅出的阐释，让不了解八字的用户也能轻松理解。请使用Markdown格式化输出，保持报告的专业性和结构清晰。"},
+                {"role": "system", "content": system_prompt_content},
                 {"role": "user", "content": prompt}
             ],
             "temperature": temperature,
