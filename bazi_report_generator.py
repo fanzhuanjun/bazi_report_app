@@ -1,33 +1,21 @@
 # bazi_report_generator.py
 
-import httpx # Using httpx for HTTP requests, you can use 'requests' as well
+import httpx # Using httpx for HTTP requests
 import json
 from typing import Dict
 import sxtwl
-# You might have a more sophisticated Bazi calculation utility.
-# For now, calculate_simple_bazi is a placeholder.
-# If you have a real Bazi library (like sxtwlpy or a custom one), integrate it here.
-# TIAN_GAN = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
-# DI_ZHI = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
-
-# # Simplified Bazi calculation - placeholder, replace with accurate logic
-# def get_gan_zhi(year, val_offset_gan, val_offset_zhi):
-#     # This is an extremely naive placeholder and not astrologically correct.
-#     # Replace with a proper Bazi calculation library or algorithm.
-#     gan_idx = (year - val_offset_gan) % 10
-#     zhi_idx = (year - val_offset_zhi) % 12
-#     return f"{TIAN_GAN[gan_idx]}{DI_ZHI[zhi_idx]}"
+import asyncio # For asynchronous operations
 
 class DeepSeekBaziReport:
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.base_url = "https://api.deepseek.com/v1" # Official API endpoint
+        self.base_url = "https://api.deepseek.com/v1"
 
-        # 八字基础数据（用于本地计算）
         self.Gan = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
         self.Zhi = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
 
-        # 五行映射 (这些映射信息可以保留，因为AI可能需要它们进行分析，即使我们不本地计算)
+        # These mappings can be kept as they might be useful for context,
+        # even if primary calculations are done by sxtwl.
         self.gan_elements = {
             "甲": "木", "乙": "木", "丙": "火", "丁": "火", "戊": "土",
             "己": "土", "庚": "金", "辛": "金", "壬": "水", "癸": "水"
@@ -37,21 +25,24 @@ class DeepSeekBaziReport:
             "巳": "火", "午": "火", "未": "土", "申": "金", "酉": "金",
             "戌": "土", "亥": "水"
         }
-        self.zhi_hidden_stems = {
+        self.zhi_hidden_stems = { # Simplified, real Bazi needs more complex hidden stem logic
             "子": ["癸"], "丑": ["己", "癸", "辛"], "寅": ["甲", "丙", "戊"],
             "卯": ["乙"], "辰": ["戊", "乙", "癸"], "巳": ["丙", "庚", "戊"],
             "午": ["丁", "己"], "未": ["己", "丁", "乙"], "申": ["庚", "壬", "戊"],
             "酉": ["辛"], "戌": ["戊", "辛", "丁"], "亥": ["壬", "甲"]
         }
+        # Shared httpx AsyncClient for all async calls
+        # Initialize it here or ensure it's created and closed properly per batch of requests
+        # For simplicity in this class structure, we'll create it per call,
+        # but a shared client (properly managed) can be more efficient for many calls.
 
-    def _call_deepseek_api(self, prompt: str, model: str = "deepseek-chat", temperature: float = 0.7) -> str:
+    async def _call_deepseek_api_async(self, prompt: str, model: str = "deepseek-chat", temperature: float = 0.7) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
         system_prompt_content = """你是一位精通中华传统八字命理学的资深专家。在生成报告时，请始终采用娓娓道来的叙述风格，确保语言流畅自然，富有亲和力。对于每一个分析要点，都请用3到5句完整且连贯的句子组成一个流畅的小段落进行深入浅出的阐释，让不了解八字的用户也能轻松理解。
             """
-
         data = {
             "model": model,
             "messages": [
@@ -59,16 +50,64 @@ class DeepSeekBaziReport:
                 {"role": "user", "content": prompt}
             ],
             "temperature": temperature,
-            "max_tokens": 4000, # Adjust as needed
+            "max_tokens": 4000,
         }
         try:
-            with httpx.Client(timeout=180.0) as client: # Increased timeout
+            # Increased timeout for individual API calls if necessary,
+            # but overall timeout is handled by concurrency.
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=data)
+                response.raise_for_status()
+            result = response.json()
+            if 'choices' in result and len(result['choices']) > 0:
+                content = result['choices'][0]['message']['content'].strip()
+                if content.startswith("```markdown\n"):
+                    content = content[len("```markdown\n"):]
+                if content.startswith("```\n"):
+                    content = content[len("```\n"):]
+                if content.endswith("\n```"):
+                    content = content[:-len("\n```")]
+                return content
+            else:
+                return f"API Error: Unexpected response format - {json.dumps(result)}"
+        except httpx.HTTPStatusError as e:
+            error_details = e.response.text
+            try:
+                error_json = json.loads(error_details)
+                error_message = error_json.get("error", {}).get("message", "Unknown error detail")
+            except json.JSONDecodeError:
+                error_message = error_details
+            return f"API Error: {e.response.status_code} - {error_message}"
+        except httpx.RequestError as e: # Catch network-related errors
+            return f"API Request Error: {str(e)}"
+        except Exception as e:
+            return f"Error calling DeepSeek API (async): {str(e)}"
+
+    # Keep a synchronous version for the free report if preferred, or make it async too.
+    def _call_deepseek_api_sync(self, prompt: str, model: str = "deepseek-chat", temperature: float = 0.7) -> str:
+        # This is essentially the original _call_deepseek_api method
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        system_prompt_content = """你是一位精通中华传统八字命理学的资深专家。在生成报告时，请始终采用娓娓道来的叙述风格，确保语言流畅自然，富有亲和力。对于每一个分析要点，都请用3到5句完整且连贯的句子组成一个流畅的小段落进行深入浅出的阐释，让不了解八字的用户也能轻松理解。
+            """
+        data = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt_content},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": temperature,
+            "max_tokens": 4000,
+        }
+        try:
+            with httpx.Client(timeout=180.0) as client:
                 response = client.post(f"{self.base_url}/chat/completions", headers=headers, json=data)
                 response.raise_for_status()
             result = response.json()
             if 'choices' in result and len(result['choices']) > 0:
                 content = result['choices'][0]['message']['content'].strip()
-                # Remove potential ```markdown ... ``` wrappers if LLM adds them
                 if content.startswith("```markdown\n"):
                     content = content[len("```markdown\n"):]
                 if content.startswith("```\n"):
@@ -89,24 +128,14 @@ class DeepSeekBaziReport:
         except Exception as e:
             return f"Error calling DeepSeek API: {str(e)}"
 
-    def calculate_simple_bazi(self, year: int, month: int, day: int, hour: int) -> Dict[str, str]:
-        """
-        根据公历日期和时辰计算四柱八字。
-        Args:
-            year (int): 公历年份
-            month (int): 公历月份
-            day (int): 公历日期
-            hour (int): 公历小时 (0-23)，用于计算时柱
-        Returns:
-            dict: 包含四柱干支的字典
-        """
-        try:
-            day_obj = sxtwl.fromSolar(year, month, day) 
 
+    def calculate_simple_bazi(self, year: int, month: int, day: int, hour: int) -> Dict[str, str]:
+        try:
+            day_obj = sxtwl.fromSolar(year, month, day)
             yTG = day_obj.getYearGZ()
             mTG = day_obj.getMonthGZ()
             dTG = day_obj.getDayGZ()
-            sTG = day_obj.getHourGZ(hour)
+            sTG = day_obj.getHourGZ(hour) # sxtwl uses 0-23 for hour directly for getHourGZ
             
             bazi_info = {
                 "year_gz": self.Gan[yTG.tg] + self.Zhi[yTG.dz],
@@ -116,13 +145,15 @@ class DeepSeekBaziReport:
             }
             return bazi_info
         except Exception as e:
-            print(f"Error in placeholder Bazi calculation: {e}")
+            # More specific error logging
+            print(f"Error in Bazi calculation (sxtwl): year={year}, month={month}, day={day}, hour={hour}. Error: {e}")
+            # Return a clear error indicator
             return {
-                "year_gz": "甲子", "month_gz": "丙寅",
-                "day_gz": "丁卯", "hour_gz": "戊辰"
+                "year_gz": "计算错误", "month_gz": "计算错误",
+                "day_gz": "计算错误", "hour_gz": "计算错误"
             }
 
-
+    # Free report can remain synchronous if its generation is quick enough
     def generate_free_report(self, bazi_str: str, gender: str) -> str:
         prompt = f"""
             请根据以下八字信息和性别，生成一份简要的免费八字命理报告。报告内容应直接呈现，无需额外解释或标题。
@@ -137,9 +168,10 @@ class DeepSeekBaziReport:
 
             请直接输出这份包含三点的简要报告。
             """
-        return self._call_deepseek_api(prompt, temperature=0.5)
+        return self._call_deepseek_api_sync(prompt, temperature=0.5) # Using sync version
 
-    def generate_bazi_analysis_module(self, bazi_str: str, gender: str) -> str:
+    # Premium modules will now be async
+    async def generate_bazi_analysis_module_async(self, bazi_str: str, gender: str) -> str:
         prompt = f"""
             ### 八字排盘与五行分析
 
@@ -169,9 +201,9 @@ class DeepSeekBaziReport:
 
             请以专业严谨但通俗易懂的方式展开内容，确保逻辑清晰、分析深入，让零基础读者也能轻松理解。
             """
-        return self._call_deepseek_api(prompt)
+        return await self._call_deepseek_api_async(prompt)
 
-    def generate_mingge_decode_module(self, bazi_str: str, gender: str) -> str:
+    async def generate_mingge_decode_module_async(self, bazi_str: str, gender: str) -> str:
         prompt = f"""
             ### 命格解码与人生特质
             
@@ -204,9 +236,9 @@ class DeepSeekBaziReport:
             
             请确保分析深刻、富有洞察力，且行文流畅易懂。
             """
-        return self._call_deepseek_api(prompt)
+        return await self._call_deepseek_api_async(prompt)
 
-    def generate_career_love_module(self, bazi_str: str, gender: str) -> str:
+    async def generate_career_love_module_async(self, bazi_str: str, gender: str) -> str:
         prompt = f"""
             ### 事业财富与婚恋分析
             
@@ -250,9 +282,9 @@ class DeepSeekBaziReport:
             
             请确保分析具体、实用，结论有据可循，文字亲切易懂。
             """
-        return self._call_deepseek_api(prompt)
+        return await self._call_deepseek_api_async(prompt)
 
-    def generate_health_advice_module(self, bazi_str: str, gender: str) -> str:
+    async def generate_health_advice_module_async(self, bazi_str: str, gender: str) -> str:
         prompt = f"""
             ### 五行健康与养生建议
             
@@ -281,9 +313,9 @@ class DeepSeekBaziReport:
             
             请确保建议具有针对性，并尽可能结合中医五行理论进行阐释，使其更具参考价值。
             """
-        return self._call_deepseek_api(prompt)
+        return await self._call_deepseek_api_async(prompt)
 
-    def generate_fortune_flow_module(self, bazi_str: str, gender: str) -> str:
+    async def generate_fortune_flow_module_async(self, bazi_str: str, gender: str) -> str:
         prompt = f"""
             ### 大运流年运势推演 (简要趋势)
 
@@ -309,4 +341,4 @@ class DeepSeekBaziReport:
 
             **声明**: 此处提供的分析是基于八字命理理论对未来运势所做的简要趋势性推演，主要用于提供一个宏观的参考框架。具体到每一年甚至每一月的详细运势，会受到更多细微因素的影响，且个人的主观努力和选择亦至关重要。因此，本内容仅供参考，不宜作为重大决策的唯一依据。
             """
-        return self._call_deepseek_api(prompt)
+        return await self._call_deepseek_api_async(prompt)
