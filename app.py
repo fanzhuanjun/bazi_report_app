@@ -1,90 +1,82 @@
 # app.py
 import streamlit as st
-from datetime import datetime
-from bazi_report_generator import DeepSeekBaziReport # 假设这个是你最初的 bazi_report_generator.py
+from datetime import datetime, date, timedelta # Import date and timedelta
+from bazi_report_generator import DeepSeekBaziReport
 import pytz
+import asyncio # For asynchronous operations
 
 # ！！！确保这是整个脚本的第一个 Streamlit 命令！！！
 st.set_page_config(
     page_title="反转 专业八字命理学报告",
-    page_icon="https://i.miji.bid/2025/06/02/066902e47e5172e4f1c67ac2c66cbeb5.png", # 可以用一个更相关的图标，例如 🔮 或 ✨
+    page_icon="https://i.miji.bid/2025/06/02/066902e47e5172e4f1c67ac2c66cbeb5.png",
     layout="wide",
-    initial_sidebar_state="expanded" # 确保侧边栏默认展开
+    initial_sidebar_state="expanded"
 )
 
 # --- DeepSeek API Key 配置 ---
 api_key = "sk-392daa9410c7429fa9be75e49049a4ec" # 请替换为您的有效API Key
 
-# --- Custom CSS for Beautification (您原有的CSS，稍作调整以适应侧边栏) ---
+# --- Custom CSS for Beautification ---
 custom_css = """
 <style>
     body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         color: #333;
-        /* background-color: #f5f5f7; /* 可以为整个页面设置浅色背景 */
     }
-
-    /* Main title of the app (in the main area) */
     .app-main-title {
         color: #2c3e50; 
         text-align: center;
-        font-size: 2.6em; /* 稍微调整 */
+        font-size: 2.6em;
         font-weight: bold;
-        margin-bottom: 15px; /* 调整间距 */
+        margin-bottom: 15px;
         padding-top: 20px;
     }
-    .app-subtitle { /* 主区域的副标题 */
+    .app-subtitle {
         text-align: center;
         color: #555;
         font-size: 1.05em;
-        margin-bottom: 30px; /* 调整间距 */
+        margin-bottom: 30px;
     }
-
-    /* Sidebar title style */
-    div[data-testid="stSidebarNavItems"] + div h2, /* 更精确地定位侧边栏内的标题 */
-    [data-testid="stSidebar"] [data-testid="stHeading"] { /* Streamlit 1.18+ heading in sidebar */
+    div[data-testid="stSidebarNavItems"] + div h2,
+    [data-testid="stSidebar"] [data-testid="stHeading"] {
         color: #2c3e50 !important;
-        font-size: 1.6em !important; /* 侧边栏标题大小 */
+        font-size: 1.6em !important;
         font-weight: 600 !important;
         padding-bottom: 10px;
-        /* border-bottom: 2px solid #3498db; /* 侧边栏标题下划线颜色 */
-        /* text-align: center; */ /* 如果希望居中 */
     }
-    
-    /* Style for Streamlit input labels in sidebar to match the image */
-    [data-testid="stSidebar"] .st-emotion-cache-1qg0nbk p { /* This selector might change with Streamlit versions, inspect to confirm */
-        color: #4a5568; /* Darker grey for labels */
-        font-size: 0.95em; /* Slightly smaller labels */
+    [data-testid="stSidebar"] .st-emotion-cache-1qg0nbk p, 
+    [data-testid="stSidebar"] label p, 
+    [data-testid="stSidebar"] .st-emotion-cache-ue6h3e p 
+    {
+        color: #4a5568;
+        font-size: 0.95em;
     }
-    [data-testid="stSidebar"] .stRadio > label { /* Radio button labels */
+    [data-testid="stSidebar"] .stRadio > label {
          font-size: 0.95em !important;
          color: #4a5568 !important;
     }
-
-
-    /* Bazi info display card (in the main area) */
     .bazi-info-card {
         background-color: #fdfefe; 
         border: 1px solid #e5e8eb; 
-        border-left: 5px solid #3498db; /* 左侧蓝色强调线 */
+        border-left: 5px solid #3498db;
         padding: 20px;
-        margin-top: 20px; /* 与上方元素的间距 */
+        margin-top: 20px;
         margin-bottom: 25px;
         border-radius: 8px;
         box-shadow: 0 3px 6px rgba(0,0,0,0.06);
     }
     .bazi-info-card p {
-        margin-bottom: 10px; /* 段落间距 */
+        margin-bottom: 10px;
         font-size: 1.05em;
         line-height: 1.65;
         color: #333;
     }
-    .bazi-info-card strong { /* 卡片内标签，如“公历生日” */
+    .bazi-info-card strong {
         color: #2980b9; 
         font-weight: 600;
         margin-right: 5px;
     }
-     .bazi-info-card .highlight-bazi { /* 八字干支高亮 */
+     .bazi-info-card .highlight-bazi {
         background-color: #e8f6f3;
         color: #117a65;
         padding: 2px 6px;
@@ -93,113 +85,92 @@ custom_css = """
         border: 1px solid #a2d9ce;
         display: inline-block;
     }
-
-
-    /* Report type title (in the main area) */
     .report-type-title {
         color: #c0392b; 
-        font-size: 1.8em; /* 调整大小以适应主内容区 */
+        font-size: 1.8em;
         font-weight: bold;
         margin-top: 30px;
         margin-bottom: 20px;
         padding-bottom: 8px;
-        /* text-align: center; /* 如果希望居中 */
     }
+    .report-content { padding: 5px; margin-top: 10px; }
+    .report-content h2 { color: #2980b9; font-size: 1.7em; font-weight: 600; margin-top: 30px; margin-bottom: 15px; padding-bottom: 8px; border-bottom: 2px solid #aed6f1; }
+    .report-content h3 { color: #27ae60; font-size: 1.5em; font-weight: 600; margin-top: 25px; margin-bottom: 12px; }
+    .report-content h4 { color: #8e44ad; font-size: 1.3em; font-weight: 600; margin-top: 20px; margin-bottom: 10px; }
+    .report-content p { line-height: 1.75; color: #34495e; margin-bottom: 14px; font-size: 1.05em; }
+    .report-content strong, .report-content b { color: #d35400; font-weight: bold !important; }
+    .report-content ul, .report-content ol { margin-left: 5px; padding-left: 25px; }
+    .report-content li { margin-bottom: 10px; line-height: 1.7; font-size: 1.05em; }
+    .report-content blockquote { border-left: 5px solid #f39c12; padding: 12px 20px; margin: 20px 0; background-color: #fef5e7; color: #873600; border-radius: 6px; }
+    .disclaimer-box { background-color: #f0f2f6; border: 1px solid #d9d9d9; padding: 20px; margin-top: 40px; border-radius: 8px; font-size: 0.9em; color: #595959; line-height: 1.6; }
+    .stTabs [data-baseweb="tab-list"] { background-color: #f0f2f6; border-radius: 6px; padding: 5px; margin-bottom: 15px; }
+    .stTabs [data-baseweb="tab-list"] button { font-size: 1em; font-weight: 500; color: #595959; border-radius: 4px; margin-right: 5px; padding: 8px 15px; }
+    .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] { background-color: #3498db; color: white !important; font-weight: 600; }
+    .stTabs [data-baseweb="tab-panel"] { padding-top: 10px; }
 
-    /* LLM generated report content styles (in the main area) */
-    .report-content {
-        padding: 5px;
-        margin-top: 10px; /* 确保与上方标题有间距 */
-    }
-    .report-content h2 { /* ## */
-        color: #2980b9; 
-        font-size: 1.7em;
-        font-weight: 600;
-        margin-top: 30px;
-        margin-bottom: 15px;
-        padding-bottom: 8px;
-        border-bottom: 2px solid #aed6f1; 
-    }
-    .report-content h3 { /* ### */
-        color: #27ae60; 
-        font-size: 1.5em;
-        font-weight: 600;
-        margin-top: 25px;
-        margin-bottom: 12px;
-    }
-    .report-content h4 { /* #### */
-        color: #8e44ad; 
-        font-size: 1.3em;
-        font-weight: 600;
-        margin-top: 20px;
-        margin-bottom: 10px;
-    }
-    .report-content p {
-        line-height: 1.75; 
-        color: #34495e; 
-        margin-bottom: 14px; 
-        font-size: 1.05em;
-    }
-    .report-content strong, .report-content b {
-        color: #d35400; 
-        font-weight: bold !important; /* 确保所有strong都加粗 */
-    }
-    .report-content ul, .report-content ol {
-        margin-left: 5px; 
-        padding-left: 25px;
-    }
-    .report-content li {
-        margin-bottom: 10px;
-        line-height: 1.7;
-        font-size: 1.05em;
-    }
-    .report-content blockquote {
-        border-left: 5px solid #f39c12; 
-        padding: 12px 20px; 
-        margin: 20px 0; 
-        background-color: #fef5e7; 
-        color: #873600; 
-        border-radius: 6px;
-    }
-
-    /* Disclaimer box (in the main area) */
-    .disclaimer-box {
-        background-color: #f0f2f6; /* 浅灰色背景 */
-        border: 1px solid #d9d9d9; 
-        padding: 20px;
-        margin-top: 40px; /* 与上方内容的主要间距 */
-        border-radius: 8px;
-        font-size: 0.9em;
-        color: #595959; 
-        line-height: 1.6;
-    }
-
-    /* Tabs styling (in the main area) */
-    .stTabs [data-baseweb="tab-list"] {
-        background-color: #f0f2f6; /* 标签栏背景色 */
-        border-radius: 6px;
-        padding: 5px;
-        margin-bottom: 15px; /* 标签栏和内容的间距 */
-    }
-    .stTabs [data-baseweb="tab-list"] button {
-        font-size: 1em; /* 标签文字大小 */
-        font-weight: 500;
-        color: #595959; 
-        border-radius: 4px;
-        margin-right: 5px;
-        padding: 8px 15px; /* 标签内边距 */
-    }
-    .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
-        background-color: #3498db; 
-        color: white !important; 
-        font-weight: 600;
-    }
-    .stTabs [data-baseweb="tab-panel"] {
-        padding-top: 10px; 
+    /* Custom style for st.date_input to show placeholder with YYYY-MM-DD */
+    /* This might not override the calendar pop-up's month names but affects the input field look */
+    div[data-testid="stDateInput"] input::placeholder {
+        content: "YYYY-MM-DD";
     }
 </style>
 """
 st.markdown(custom_css, unsafe_allow_html=True)
+
+
+# Helper class for premium report generation
+class PremiumReportGenerator:
+    def __init__(self, bazi_engine, bazi_str, gender, tab_titles, generation_methods_map_async):
+        self.bazi_engine = bazi_engine
+        self.bazi_str = bazi_str
+        self.gender = gender
+        self.tab_titles = tab_titles
+        self.generation_methods_map_async = generation_methods_map_async
+        
+        self.generated_modules = {}
+        self.overall_success = True
+        
+        self.progress_bar_ui = None
+        self.text_status_ui = None
+
+    async def _generate_module_task(self, title):
+        method_to_call = self.generation_methods_map_async[title]
+        try:
+            content = await method_to_call(self.bazi_str, self.gender) 
+            self.generated_modules[title] = content
+            if "API Error:" in content or "Error calling DeepSeek API:" in content:
+                self.overall_success = False
+        except Exception as e:
+            self.generated_modules[title] = f"生成模块 '{title}' 时发生意外错误: {str(e)}"
+            self.overall_success = False
+        return title
+
+    async def run_all_concurrently(self, progress_bar_ui, text_status_ui):
+        self.progress_bar_ui = progress_bar_ui
+        self.text_status_ui = text_status_ui
+        
+        tasks = [self._generate_module_task(title) for title in self.tab_titles]
+        
+        num_completed = 0
+        total_modules = len(self.tab_titles)
+        
+        # Initialize progress bar and text
+        self.progress_bar_ui.progress(0)
+        self.text_status_ui.text(f"⏳ 准备开始生成报告模块... (0/{total_modules})")
+
+        for future in asyncio.as_completed(tasks):
+            completed_task_title = await future 
+            num_completed += 1
+            
+            short_display_title = completed_task_title.split('与')[0].split('和')[0]
+            # Update text and progress bar
+            self.text_status_ui.text(f"⏳ 正在生成 {short_display_title} 模块... ({num_completed}/{total_modules})")
+            self.progress_bar_ui.progress(num_completed / total_modules)
+            
+        self.text_status_ui.text(f"✅ 所有报告模块生成完毕! ({total_modules}/{total_modules})") # Final status
+        # Don't empty text_status_ui here, let the calling code do it after rerun if needed.
+        return self.generated_modules, self.overall_success
+
 
 # --- 初始化 Session State ---
 if 'report_generated_successfully' not in st.session_state:
@@ -210,11 +181,20 @@ if 'free_report_content' not in st.session_state:
     st.session_state.free_report_content = ""
 if 'premium_modules_content' not in st.session_state:
     st.session_state.premium_modules_content = {}
+
+# Default birth date calculation - robustly handle month/day for default
+try:
+    default_birth_date = date(datetime.now().year - 28, datetime.now().month, datetime.now().day)
+except ValueError: # Handles cases like Feb 29 for non-leap year if current date is Feb 29
+    default_birth_date = date(datetime.now().year - 28, datetime.now().month, 1)
+
+
 if 'user_inputs' not in st.session_state:
     st.session_state.user_inputs = {
-        "year": datetime.now().year - 28, "month": datetime.now().month,
-        "day": datetime.now().day, "hour": 12,
-        "gender": '男', "report_type": '免费版报告 (简要)'
+        "birth_date": default_birth_date,
+        "hour": 12,
+        "gender": '男',
+        "report_type": '免费版报告 (简要)'
     }
 
 def clear_all_data_and_rerun():
@@ -225,10 +205,20 @@ def clear_all_data_and_rerun():
     for key in keys_to_delete:
         if key in st.session_state:
             del st.session_state[key]
+    
+    current_year = datetime.now().year
+    # Recalculate default_date_val robustly
+    try:
+        default_date_val = date(current_year - 28, datetime.now().month, datetime.now().day)
+    except ValueError:
+        default_date_val = date(current_year - 28, datetime.now().month, 1)
+
+
     st.session_state.user_inputs = {
-        "year": datetime.now().year - 28, "month": datetime.now().month,
-        "day": datetime.now().day, "hour": 12,
-        "gender": '男', "report_type": '免费版报告 (简要)'
+        "birth_date": default_date_val,
+        "hour": 12,
+        "gender": '男',
+        "report_type": '免费版报告 (简要)'
     }
     st.session_state.report_generated_successfully = False
     st.rerun()
@@ -236,29 +226,43 @@ def clear_all_data_and_rerun():
 
 # --- 侧边栏：输入信息 ---
 with st.sidebar:
-    # st.image("your_logo.png", width=100) # 如果您有logo可以放这里
-    st.markdown("## 🗓️ 个人信息输入") # 使用Markdown标题以应用CSS
-    st.markdown("---") # 分隔线
+    st.markdown("## 🗓️ 个人信息输入")
+    st.markdown("---")
 
     if st.session_state.get('report_generated_successfully', False):
-        # st.info("已有报告生成。若需重填，请先清除。") # 这个提示可以移到主区域
         if st.button("✨ 清除报告并重填", key="clear_report_button_sidebar", use_container_width=True):
             clear_all_data_and_rerun()
         st.markdown("---")
 
     current_year = datetime.now().year
-    st.session_state.user_inputs['year'] = st.number_input(
-        "出生年份 (公历)", min_value=1900, max_value=current_year,
-        value=st.session_state.user_inputs['year'], step=1, key="year_input_sidebar"
+    min_date = date(1900, 1, 1)
+    # Ensure max_date is valid, e.g. not beyond current date if current_year is selected
+    max_date_dt = datetime(current_year, 12, 31)
+    if datetime.now() < max_date_dt: # If current date is before Dec 31 of current year
+        max_date = datetime.now().date()
+    else:
+        max_date = max_date_dt.date()
+
+    
+    if isinstance(st.session_state.user_inputs.get('birth_date'), str):
+        try:
+            st.session_state.user_inputs['birth_date'] = datetime.strptime(st.session_state.user_inputs['birth_date'], "%Y-%m-%d").date()
+        except:
+            st.session_state.user_inputs['birth_date'] = default_birth_date # Use module-level default
+    elif not isinstance(st.session_state.user_inputs.get('birth_date'), date):
+         st.session_state.user_inputs['birth_date'] = default_birth_date # Use module-level default
+
+    # The format "YYYY/MM/DD" tells st.date_input how to display the date in the input box.
+    # The calendar pop-up language is usually controlled by browser locale.
+    st.session_state.user_inputs['birth_date'] = st.date_input(
+        "出生日期 (公历)",
+        value=st.session_state.user_inputs['birth_date'],
+        min_value=min_date,
+        max_value=max_date,
+        key="birth_date_input_sidebar",
+        format="YYYY-MM-DD" # Use YYYY-MM-DD for a more standard numeric display in the box
     )
-    st.session_state.user_inputs['month'] = st.number_input(
-        "出生月份 (公历)", min_value=1, max_value=12,
-        value=st.session_state.user_inputs['month'], step=1, key="month_input_sidebar"
-    )
-    st.session_state.user_inputs['day'] = st.number_input(
-        "出生日期 (公历)", min_value=1, max_value=31,
-        value=st.session_state.user_inputs['day'], step=1, key="day_input_sidebar"
-    )
+
     st.session_state.user_inputs['hour'] = st.number_input(
         "出生时辰 (24小时制, 0-23)", min_value=0, max_value=23,
         value=st.session_state.user_inputs['hour'], step=1, key="hour_input_sidebar"
@@ -270,7 +274,7 @@ with st.sidebar:
     except ValueError:
         current_gender_index = 0
     st.session_state.user_inputs['gender'] = st.radio(
-        "您的性别", gender_options, index=current_gender_index, key="gender_input_sidebar" # horizontal=False 默认垂直
+        "您的性别", gender_options, index=current_gender_index, key="gender_input_sidebar"
     )
     
     report_type_options = ('免费版报告 (简要)', '付费版报告 (专业详细)')
@@ -282,47 +286,38 @@ with st.sidebar:
         "选择报告类型", report_type_options, index=current_report_type_index, key="report_type_input_sidebar"
     )
 
-    st.markdown("---") # 分隔线
+    st.markdown("---")
     if st.button("🚀 生成报告", type="primary", disabled=st.session_state.get('report_generated_successfully', False), use_container_width=True, key="generate_report_sidebar"):
-        # ... (生成报告的逻辑和之前版本一样，这里不再重复，确保它在按钮的 if 块内) ...
-        # 清空旧数据
         st.session_state.report_generated_successfully = False
         st.session_state.bazi_info_for_display = {}
         st.session_state.free_report_content = ""
         st.session_state.premium_modules_content = {}
 
-        year = st.session_state.user_inputs['year']
-        month = st.session_state.user_inputs['month']
-        day = st.session_state.user_inputs['day']
+        birth_date_obj = st.session_state.user_inputs['birth_date']
+        year = birth_date_obj.year
+        month = birth_date_obj.month # This will be an integer
+        day = birth_date_obj.day
         hour = st.session_state.user_inputs['hour']
         selected_gender = st.session_state.user_inputs['gender']
         selected_report_type = st.session_state.user_inputs['report_type']
 
+        main_error_placeholder = st.empty()
+
         if not api_key or not api_key.startswith("sk-"):
-            st.error("DeepSeek API Key 未配置或格式不正确。") # 这个错误最好显示在主区域
-            with st.spinner("错误"): # 临时占位，主区域会显示
-                st.stop()
+            main_error_placeholder.error("DeepSeek API Key 未配置或格式不正确。请在代码中配置有效的API Key。")
+            st.stop()
 
-
-        try: # 日期有效性检查
-            if month == 2:
-                is_leap = (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
-                max_days = 29 if is_leap else 28
-            elif month in [4, 6, 9, 11]: max_days = 30
-            else: max_days = 31
-            if not (1 <= day <= max_days):
-                st.error(f"{year}年{month}月没有{day}日！") # 主区域显示
-                st.stop()
+        try:
             datetime(year, month, day, hour)
         except ValueError:
-            st.error("您输入的日期或时间无效！") # 主区域显示
+            main_error_placeholder.error("您输入的日期或时间无效！")
             st.stop()
 
         bazi_engine = DeepSeekBaziReport(api_key)
         calculated_bazi_info = bazi_engine.calculate_simple_bazi(year, month, day, hour)
         
         if "计算错误" in calculated_bazi_info.values():
-            st.error("八字计算时发生错误，请检查输入。") # 主区域显示
+            main_error_placeholder.error("八字计算时发生错误，请检查输入或联系管理员。")
             st.session_state.report_generated_successfully = False
             st.stop()
 
@@ -334,77 +329,79 @@ with st.sidebar:
         )
         
         st.session_state.bazi_info_for_display = {
-            "year": year, "month": month, "day": day, "hour": hour,
+            "year": year, "month": month, "day": day, "hour": hour, # month is already an integer
             "bazi_str": bazi_string_representation, 
             "gender": selected_gender, 
             "report_type": selected_report_type 
         }
         
-        main_area_status_placeholder = st.empty() # 用于在主区域显示 spinner 和 progress
+        # UI elements for status - create them in the main area
+        status_container = st.empty() # This will hold both progress bar and text
 
         if selected_report_type == '免费版报告 (简要)':
-            with main_area_status_placeholder.container(), st.spinner("正在努力生成您的免费八字报告，请稍候..."):
-                 # 用 .container() 可以在 empty 内部放置多个元素，如果需要的话
+            with status_container, st.spinner("正在努力生成您的免费八字报告，请稍候..."): # Spinner will show within this container
                 generated_report_content = bazi_engine.generate_free_report(bazi_string_representation, selected_gender)
+            
+            status_container.empty() # Clear the spinner once done
+
             if "API Error:" in generated_report_content or "Error calling DeepSeek API:" in generated_report_content:
-                st.error(f"生成免费报告时遇到问题：{generated_report_content}")
+                main_error_placeholder.error(f"生成免费报告时遇到问题：{generated_report_content}")
             else:
                 st.session_state.free_report_content = generated_report_content
                 st.session_state.report_generated_successfully = True
-            main_area_status_placeholder.empty() # 清除spinner信息
         
         else: # 付费版报告 (专业详细)
-            generated_premium_modules = {}
-            all_modules_generated_ok = True
             tab_titles = ["八字排盘与五行分析", "命格解码与人生特质", "事业财富与婚恋分析", "五行健康与养生建议", "大运流年运势推演"]
-            generation_methods_map = {
-                "八字排盘与五行分析": bazi_engine.generate_bazi_analysis_module,
-                "命格解码与人生特质": bazi_engine.generate_mingge_decode_module,
-                "事业财富与婚恋分析": bazi_engine.generate_career_love_module,
-                "五行健康与养生建议": bazi_engine.generate_health_advice_module,
-                "大运流年运势推演": bazi_engine.generate_fortune_flow_module
+            
+            generation_methods_map_async = {
+                "八字排盘与五行分析": bazi_engine.generate_bazi_analysis_module_async,
+                "命格解码与人生特质": bazi_engine.generate_mingge_decode_module_async,
+                "事业财富与婚恋分析": bazi_engine.generate_career_love_module_async,
+                "五行健康与养生建议": bazi_engine.generate_health_advice_module_async,
+                "大运流年运势推演": bazi_engine.generate_fortune_flow_module_async
             }
-            total_modules = len(tab_titles)
-            
-            current_progress_bar = main_area_status_placeholder.progress(0) # 在主区域创建并显示进度条
 
-            # 主区域的进度条
-            # progress_bar_placeholder_main = st.empty()
+            report_generator_instance = PremiumReportGenerator(
+                bazi_engine, 
+                bazi_string_representation, 
+                selected_gender, 
+                tab_titles, 
+                generation_methods_map_async
+            )
             
-            for i, title in enumerate(tab_titles):
-                # Spinner 文本现在直接用 st.text 或 st.caption 更新，而不是嵌套在 spinner里
-                # 或者，如果希望spinner和进度条同时显示，可以再用一个empty给spinner
-                spinner_text_placeholder = st.empty() # 放在循环内，每次更新文本
-                spinner_text_placeholder.text(f"⏳ 正在生成 {title.split('与')[0].split('和')[0]} 模块... ({i+1}/{total_modules})")
-                
-                # 模拟API调用，实际是LLM调用
-                module_content_str = generation_methods_map[title](bazi_string_representation, selected_gender)
-                generated_premium_modules[title] = module_content_str
-                
-                if "API Error:" in module_content_str or "Error calling DeepSeek API:" in module_content_str:
-                    all_modules_generated_ok = False
-                    st.error(f"生成 '{title}' 模块失败: {module_content_str}") 
-                
-                # --- 修正进度条逻辑 ---
-                # 2. 在循环内更新进度条的值
-                current_progress_bar.progress((i + 1) / total_modules)
-                # --- 修正结束 ---
-                spinner_text_placeholder.empty() # 清除本次循环的spinner文本
+            # Create progress bar and text status elements within the status_container
+            with status_container.container(): # Use a container to manage multiple elements
+                progress_bar_element = st.progress(0)
+                text_status_element = st.text("⏳ 准备开始生成报告模块...")
 
-            main_area_status_placeholder.empty() # 清除进度条 (它会替换掉上面的progress bar)
+
+            _generated_modules_result = {}
+            _overall_success_result = True
+
+            try:
+                _generated_modules_result, _overall_success_result = asyncio.run(
+                    report_generator_instance.run_all_concurrently(progress_bar_element, text_status_element)
+                )
+            except Exception as e: # Catch errors from asyncio.run or the generator itself
+                main_error_placeholder.error(f"异步生成报告时发生系统错误: {e}")
+                _overall_success_result = False
             
-            if all_modules_generated_ok:
-                st.session_state.premium_modules_content = generated_premium_modules
-                st.session_state.report_generated_successfully = True
-            else:
-                st.warning("部分付费报告模块生成失败，请检查错误信息。")
+            # Clear status elements after completion or error, before potential rerun
+            # status_container.empty() # This clears both progress and text
+
+            st.session_state.premium_modules_content = _generated_modules_result
+            if _generated_modules_result: 
+                st.session_state.report_generated_successfully = True 
+            
+            if not _overall_success_result:
+                # Error message is already displayed by main_error_placeholder or in tabs
+                pass # No need for another warning here if main_error_placeholder is used
+
 
         if st.session_state.report_generated_successfully:
+            main_error_placeholder.empty()
+            status_container.empty() # Ensure status is cleared before rerun
             st.rerun()
-
-
-
-
 
 # --- 主页面内容 ---
 st.markdown("<h1 class='app-main-title'>✨ 反转实验室 专业八字命理报告</h1>", unsafe_allow_html=True)
@@ -426,9 +423,12 @@ if st.session_state.get('report_generated_successfully', False):
                 styled_bazi_parts.append(part)
         styled_bazi_str_display = "  |  ".join(styled_bazi_parts)
 
+        # Month is already an integer from birth_date_obj.month
+        birth_date_str = f"{bazi_display_data['year']}年 {bazi_display_data['month']}月 {bazi_display_data['day']}日 {bazi_display_data['hour']}时"
+
         bazi_info_html = f"""
         <div class="bazi-info-card">
-            <p><strong>公历生日</strong>: {bazi_display_data['year']}年 {bazi_display_data['month']}月 {bazi_display_data['day']}日 {bazi_display_data['hour']}时</p>
+            <p><strong>公历生日</strong>: {birth_date_str}</p>
             <p>{styled_bazi_str_display}</p>
             <p><strong>性别</strong>: {bazi_display_data['gender']}</p>
         </div>
@@ -455,24 +455,47 @@ if st.session_state.get('report_generated_successfully', False):
 
         if bazi_display_data['report_type'] == '免费版报告 (简要)':
             report_content_to_show = st.session_state.free_report_content
-            st.markdown(f"<div class='report-content'>{report_content_to_show}</div>", unsafe_allow_html=True)
-            content_for_download = download_file_header + report_content_to_show + download_file_footer
+            if "API Error:" in report_content_to_show or "Error calling DeepSeek API:" in report_content_to_show:
+                st.error(f"免费报告生成失败：{report_content_to_show}")
+                content_for_download = download_file_header + f"错误：{report_content_to_show}" + download_file_footer
+            else:
+                st.markdown(f"<div class='report-content'>{report_content_to_show}</div>", unsafe_allow_html=True)
+                content_for_download = download_file_header + report_content_to_show + download_file_footer
         else: 
             modules_to_show = st.session_state.premium_modules_content
             tab_titles_ordered = ["八字排盘与五行分析", "命格解码与人生特质", "事业财富与婚恋分析", "五行健康与养生建议", "大运流年运势推演"]
             tabs_display = st.tabs(tab_titles_ordered)
             
             premium_report_download_parts = [download_file_header]
+            all_modules_valid = True
             for i, title in enumerate(tab_titles_ordered):
                 with tabs_display[i]:
-                    module_str_content = modules_to_show.get(title, "")
-                    if module_str_content and not ("API Error:" in module_str_content or "Error calling DeepSeek API:" in module_str_content):
+                    module_str_content = modules_to_show.get(title, "此模块内容未能成功加载。")
+                    is_error_content = "API Error:" in module_str_content or \
+                                       "Error calling DeepSeek API:" in module_str_content or \
+                                       ("生成模块" in module_str_content and "时发生" in module_str_content)
+
+                    if is_error_content:
+                        st.error(f"抱歉，'{title}' 模块内容生成时出错或未能加载：\n{module_str_content}")
+                        premium_report_download_parts.append(f"## {title}\n\n错误：{module_str_content}\n\n---\n")
+                        all_modules_valid = False
+                    elif module_str_content == "此模块内容未能成功加载。":
+                         st.info(f"'{title}' 模块内容当前为空或未成功获取。")
+                         premium_report_download_parts.append(f"## {title}\n\n此模块内容未能成功加载。\n\n---\n")
+                         all_modules_valid = False
+                    else:
                         st.markdown(f"<div class='report-content'>{module_str_content}</div>", unsafe_allow_html=True)
                         premium_report_download_parts.append(f"## {title}\n\n{module_str_content}\n\n---\n")
-                    elif "API Error:" in module_str_content or "Error calling DeepSeek API:" in module_str_content:
-                        st.error(f"抱歉，'{title}' 模块内容生成时出错，无法显示。") # API错误显示在对应tab
-                    else:
-                        st.info(f"抱歉，'{title}' 模块内容当前为空或未成功获取。")
+            
+            if not modules_to_show or not all_modules_valid: # If no modules or some had errors
+                 if not st.session_state.get("premium_generation_error_shown_globally", False):
+                    st.warning("部分或全部付费报告模块未能成功生成，请检查各模块内容。如果问题持续，请重试或联系支持。")
+                    st.session_state.premium_generation_error_shown_globally = True # Avoid repeating this on reruns within same error state
+            else:
+                if "premium_generation_error_shown_globally" in st.session_state:
+                    del st.session_state.premium_generation_error_shown_globally
+
+
             content_for_download = "".join(premium_report_download_parts).strip() + download_file_footer.strip()
 
         if content_for_download:
@@ -486,14 +509,12 @@ if st.session_state.get('report_generated_successfully', False):
                 data=markdown_bytes,
                 file_name=markdown_filename,
                 mime="text/markdown",
-                key="download_report_main_button", # 确保key唯一
+                key="download_report_main_button",
                 use_container_width=True 
             )
     else:
         st.info("⬅️ 请在左侧栏输入您的信息并点击“生成报告”以查看结果。")
 
-
-# --- 页脚免责声明 (全局) ---
 st.markdown("---")
 st.markdown(
     "<div class='disclaimer-box'><strong>免责声明</strong>：本报告内容基于八字命理学理论，旨在提供参考与启发，并非预示确定的人生轨迹。命理学作为一种传统文化，其解读具有多重维度和不确定性，不应视为精密科学。个人命运的塑造离不开主观能动性与实际行动，请您结合自身情况理性看待报告内容，不宜作为重大人生决策的唯一依据。</div>",
