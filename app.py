@@ -108,10 +108,17 @@ custom_css = """
     .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] { background-color: #3498db; color: white !important; font-weight: 600; }
     .stTabs [data-baseweb="tab-panel"] { padding-top: 10px; }
 
-    /* Custom style for st.date_input to show placeholder with YYYY-MM-DD */
+    /* Custom style for st.date_input placeholder:
+       The `content` property for `::placeholder` is non-standard and can cause issues.
+       The browser's default placeholder for date inputs is usually sufficient and adapts
+       to the format string provided in st.date_input (e.g., "YYYY-MM-DD").
+       Commenting this rule out to potentially improve stability on mobile devices.
+    */
+    /*
     div[data-testid="stDateInput"] input::placeholder {
         content: "YYYY-MM-DD";
     }
+    */
 </style>
 """
 st.markdown(custom_css, unsafe_allow_html=True)
@@ -254,15 +261,15 @@ with st.sidebar:
     elif not isinstance(st.session_state.user_inputs.get('birth_date'), date):
          st.session_state.user_inputs['birth_date'] = default_birth_date # Use module-level default
 
-    # The format "YYYY/MM/DD" tells st.date_input how to display the date in the input box.
-    # The calendar pop-up language is usually controlled by browser locale.
+    # The format "YYYY-MM-DD" tells st.date_input how to display the date in the input box.
+    # The calendar pop-up language (e.g., month names) is usually controlled by the browser's locale settings.
     st.session_state.user_inputs['birth_date'] = st.date_input(
         "出生日期 (公历)",
         value=st.session_state.user_inputs['birth_date'],
         min_value=min_date,
         max_value=max_date,
         key="birth_date_input_sidebar",
-        format="YYYY-MM-DD" # Use YYYY-MM-DD for a more standard numeric display in the box
+        format="YYYY-MM-DD" # Use YYYY-MM-DD for a standard numeric display in the box
     )
 
     st.session_state.user_inputs['hour'] = st.number_input(
