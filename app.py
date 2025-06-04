@@ -1,9 +1,9 @@
 # app.py
 import streamlit as st
-from datetime import datetime, date, timedelta # Import date and timedelta
+from datetime import datetime, date, timedelta
 from bazi_report_generator import DeepSeekBaziReport
 import pytz
-import asyncio # For asynchronous operations
+import asyncio
 
 # ！！！确保这是整个脚本的第一个 Streamlit 命令！！！
 st.set_page_config(
@@ -109,7 +109,6 @@ custom_css = """
     .stTabs [data-baseweb="tab-panel"] { padding-top: 10px; }
 
     /* Custom style for st.date_input to show placeholder with YYYY-MM-DD */
-    /* This might not override the calendar pop-up's month names but affects the input field look */
     div[data-testid="stDateInput"] input::placeholder {
         content: "YYYY-MM-DD";
     }
@@ -120,12 +119,13 @@ st.markdown(custom_css, unsafe_allow_html=True)
 
 # Helper class for premium report generation
 class PremiumReportGenerator:
-    def __init__(self, bazi_engine, bazi_str, gender, tab_titles, generation_methods_map_async):
+    def __init__(self, bazi_engine, bazi_str, gender, tab_titles, generation_methods_map_async, age_info): # ADDED age_info
         self.bazi_engine = bazi_engine
         self.bazi_str = bazi_str
         self.gender = gender
         self.tab_titles = tab_titles
         self.generation_methods_map_async = generation_methods_map_async
+        self.age_info = age_info # STORED age_info
         
         self.generated_modules = {}
         self.overall_success = True
@@ -136,7 +136,10 @@ class PremiumReportGenerator:
     async def _generate_module_task(self, title):
         method_to_call = self.generation_methods_map_async[title]
         try:
-            content = await method_to_call(self.bazi_str, self.gender) 
+            # The lambda functions in app.py are now responsible for passing the correct arguments,
+            # including bazi_str, gender, and age_info consistently.
+            content = await method_to_call(self.bazi_str, self.gender, self.age_info) 
+            
             self.generated_modules[title] = content
             if "API Error:" in content or "Error calling DeepSeek API:" in content:
                 self.overall_success = False
@@ -168,7 +171,6 @@ class PremiumReportGenerator:
             self.progress_bar_ui.progress(num_completed / total_modules)
             
         self.text_status_ui.text(f"✅ 所有报告模块生成完毕! ({total_modules}/{total_modules})") # Final status
-        # Don't empty text_status_ui here, let the calling code do it after rerun if needed.
         return self.generated_modules, self.overall_success
 
 
@@ -301,6 +303,12 @@ with st.sidebar:
         selected_gender = st.session_state.user_inputs['gender']
         selected_report_type = st.session_state.user_inputs['report_type']
 
+        # Calculate age_info_str here
+        current_year_for_age = datetime.now().year
+        age_val_for_display = current_year_for_age - year
+        age_info_str = f"{age_val_for_display}周岁" if age_val_for_display >= 0 and age_val_for_display <= 90 else "暂无"
+
+
         main_error_placeholder = st.empty()
 
         if not api_key or not api_key.startswith("sk-"):
@@ -329,20 +337,22 @@ with st.sidebar:
         )
         
         st.session_state.bazi_info_for_display = {
-            "year": year, "month": month, "day": day, "hour": hour, # month is already an integer
+            "year": year, "month": month, "day": day, "hour": hour,
             "bazi_str": bazi_string_representation, 
             "gender": selected_gender, 
-            "report_type": selected_report_type 
+            "report_type": selected_report_type,
+            "age_info": age_info_str # ADDED age_info_str to session state
         }
         
         # UI elements for status - create them in the main area
-        status_container = st.empty() # This will hold both progress bar and text
+        status_container = st.empty() 
 
         if selected_report_type == '免费版报告 (简要)':
-            with status_container, st.spinner("正在努力生成您的免费八字报告，请稍候..."): # Spinner will show within this container
+            with status_container, st.spinner("正在努力生成您的免费八字报告，请稍候..."): 
+                # Free report prompt doesn't need age currently, but can be added if needed
                 generated_report_content = bazi_engine.generate_free_report(bazi_string_representation, selected_gender)
             
-            status_container.empty() # Clear the spinner once done
+            status_container.empty() 
 
             if "API Error:" in generated_report_content or "Error calling DeepSeek API:" in generated_report_content:
                 main_error_placeholder.error(f"生成免费报告时遇到问题：{generated_report_content}")
@@ -354,11 +364,20 @@ with st.sidebar:
             tab_titles = ["八字排盘与五行分析", "命格解码与人生特质", "事业财富与婚恋分析", "五行健康与养生建议", "大运流年运势推演"]
             
             generation_methods_map_async = {
-                "八字排盘与五行分析": bazi_engine.generate_bazi_analysis_module_async,
-                "命格解码与人生特质": bazi_engine.generate_mingge_decode_module_async,
-                "事业财富与婚恋分析": bazi_engine.generate_career_love_module_async,
-                "五行健康与养生建议": bazi_engine.generate_health_advice_module_async,
-                "大运流年运势推演": bazi_engine.generate_fortune_flow_module_async
+                # All lambdas now accept bazi_str_arg, gender_arg, age_info_arg consistently
+                "八字排盘与五行分析": lambda bazi_str_arg, gender_arg, age_info_arg: bazi_engine.generate_bazi_analysis_module_async(bazi_str_arg, gender_arg, age_info_arg),
+                "命格解码与人生特质": lambda bazi_str_arg, gender_arg, age_info_arg: bazi_engine.generate_mingge_decode_module_async(bazi_str_arg, gender_arg, age_info_arg),
+                "事业财富与婚恋分析": lambda bazi_str_arg, gender_arg, age_info_arg: bazi_engine.generate_career_love_module_async(bazi_str_arg, gender_arg, age_info_arg),
+                "五行健康与养生建议": lambda bazi_str_arg, gender_arg, age_info_arg: bazi_engine.generate_health_advice_module_async(bazi_str_arg, gender_arg, age_info_arg),
+                # IMPORTANT: For '大运流年运势推演', we pass additional birth details AND the age_info
+                "大运流年运势推演": lambda bazi_str_arg, gender_arg, age_info_arg: bazi_engine.generate_fortune_flow_module_async(
+                    bazi_str_arg, gender_arg,
+                    st.session_state.bazi_info_for_display['year'],
+                    st.session_state.bazi_info_for_display['month'],
+                    st.session_state.bazi_info_for_display['day'],
+                    st.session_state.bazi_info_for_display['hour'],
+                    age_info_arg # ADDED age_info_arg here
+                )
             }
 
             report_generator_instance = PremiumReportGenerator(
@@ -366,11 +385,11 @@ with st.sidebar:
                 bazi_string_representation, 
                 selected_gender, 
                 tab_titles, 
-                generation_methods_map_async
+                generation_methods_map_async,
+                age_info_str # PASSED age_info_str to PremiumReportGenerator
             )
             
-            # Create progress bar and text status elements within the status_container
-            with status_container.container(): # Use a container to manage multiple elements
+            with status_container.container(): 
                 progress_bar_element = st.progress(0)
                 text_status_element = st.text("⏳ 准备开始生成报告模块...")
 
@@ -382,30 +401,26 @@ with st.sidebar:
                 _generated_modules_result, _overall_success_result = asyncio.run(
                     report_generator_instance.run_all_concurrently(progress_bar_element, text_status_element)
                 )
-            except Exception as e: # Catch errors from asyncio.run or the generator itself
+            except Exception as e: 
                 main_error_placeholder.error(f"异步生成报告时发生系统错误: {e}")
                 _overall_success_result = False
             
-            # Clear status elements after completion or error, before potential rerun
-            # status_container.empty() # This clears both progress and text
-
             st.session_state.premium_modules_content = _generated_modules_result
             if _generated_modules_result: 
                 st.session_state.report_generated_successfully = True 
             
             if not _overall_success_result:
-                # Error message is already displayed by main_error_placeholder or in tabs
-                pass # No need for another warning here if main_error_placeholder is used
+                pass 
 
 
         if st.session_state.report_generated_successfully:
             main_error_placeholder.empty()
-            status_container.empty() # Ensure status is cleared before rerun
+            status_container.empty() 
             st.rerun()
 
 # --- 主页面内容 ---
 st.markdown("<h1 class='app-main-title'>✨ 反转实验室 专业八字命理报告</h1>", unsafe_allow_html=True)
-st.markdown("<p class='app-subtitle'>探索传统智慧，洞悉人生奥秘。请输入您的信息以生成定制命理分析。</p>", unsafe_allow_html=True)
+st.markdown("<p class='app-subtitle'>探索传统智慧，洞悉人生奥秘。请输入您的信息并生成定制命理分析。</p>", unsafe_allow_html=True)
 
 if st.session_state.get('report_generated_successfully', False):
     if 'bazi_info_for_display' in st.session_state and st.session_state.bazi_info_for_display:
@@ -423,14 +438,15 @@ if st.session_state.get('report_generated_successfully', False):
                 styled_bazi_parts.append(part)
         styled_bazi_str_display = "  |  ".join(styled_bazi_parts)
 
-        # Month is already an integer from birth_date_obj.month
         birth_date_str = f"{bazi_display_data['year']}年 {bazi_display_data['month']}月 {bazi_display_data['day']}日 {bazi_display_data['hour']}时"
+        # Display age_info if available
+        age_display_str = f"<strong>当前年龄</strong>: {bazi_display_data.get('age_info', '未知')}" if 'age_info' in bazi_display_data else ""
 
         bazi_info_html = f"""
         <div class="bazi-info-card">
             <p><strong>公历生日</strong>: {birth_date_str}</p>
             <p>{styled_bazi_str_display}</p>
-            <p><strong>性别</strong>: {bazi_display_data['gender']}</p>
+            <p><strong>性别</strong>: {bazi_display_data['gender']} {age_display_str}</p>
         </div>
         """
         st.markdown(bazi_info_html, unsafe_allow_html=True)
@@ -445,6 +461,7 @@ if st.session_state.get('report_generated_successfully', False):
 **公历生日**: {bazi_display_data['year']}年{bazi_display_data['month']}月{bazi_display_data['day']}日 {bazi_display_data['hour']}时
 **您的八字**: {bazi_display_data['bazi_str']}
 **性别**: {bazi_display_data['gender']}
+**当前年龄**: {bazi_display_data.get('age_info', '未知')}
 **报告类型**: {bazi_display_data['report_type']}
 ---
 """
@@ -487,10 +504,10 @@ if st.session_state.get('report_generated_successfully', False):
                         st.markdown(f"<div class='report-content'>{module_str_content}</div>", unsafe_allow_html=True)
                         premium_report_download_parts.append(f"## {title}\n\n{module_str_content}\n\n---\n")
             
-            if not modules_to_show or not all_modules_valid: # If no modules or some had errors
+            if not modules_to_show or not all_modules_valid: 
                  if not st.session_state.get("premium_generation_error_shown_globally", False):
                     st.warning("部分或全部付费报告模块未能成功生成，请检查各模块内容。如果问题持续，请重试或联系支持。")
-                    st.session_state.premium_generation_error_shown_globally = True # Avoid repeating this on reruns within same error state
+                    st.session_state.premium_generation_error_shown_globally = True 
             else:
                 if "premium_generation_error_shown_globally" in st.session_state:
                     del st.session_state.premium_generation_error_shown_globally
@@ -517,6 +534,6 @@ if st.session_state.get('report_generated_successfully', False):
 
 st.markdown("---")
 st.markdown(
-    "<div class='disclaimer-box'><strong>免责声明</strong>：本报告内容基于八字命理学理论，旨在提供参考与启发，并非预示确定的人生轨迹。命理学作为一种传统文化，其解读具有多重维度和不确定性，不应视为精密科学。个人命运的塑造离不开主观能动性与实际行动，请您结合自身情况理性看待报告内容，不宜作为重大人生决策的唯一依据。</div>",
+    "<div class='disclaimer-box'><strong>免责声明</strong>：本报告内容基于八字命理学理论，旨在提供参考与启发，并非预示确定的人生轨迹。命理学并非精密科学，请理性看待。个人命运的塑造离不开主观能动性与实际行动，请您结合自身情况理性看待报告内容，不宜作为重大人生决策的唯一依据。</div>",
     unsafe_allow_html=True
 )
