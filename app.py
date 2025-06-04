@@ -306,7 +306,7 @@ with st.sidebar:
         # Calculate age_info_str here
         current_year_for_age = datetime.now().year
         age_val_for_display = current_year_for_age - year
-        age_info_str = f"{age_val_for_display}周岁" if age_val_for_display >= 0 and age_val_for_display <= 90 else "暂无"
+        age_info_str = f"{age_val_for_display}岁" if age_val_for_display >= 0 and age_val_for_display <= 90 else "暂无"
 
 
         main_error_placeholder = st.empty()
