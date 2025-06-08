@@ -343,6 +343,7 @@ class DeepSeekBaziReport:
             ### 大运流年运势推演
 
             针对八字：{bazi_str}，性别：{gender}， 年龄: {age_info}。
+            出生日期：{dayun_calc_result['出生日期']}
             {dayun_start_info_line}
             大运列表:
             {dayun_list_str_for_prompt}
