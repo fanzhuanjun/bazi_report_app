@@ -156,27 +156,61 @@ class DeepSeekBaziReport:
         except Exception as e:
             return f"Error calling DeepSeek API: {str(e)}"
 
+    async def _extract_core_bazi_summary(self, bazi_analysis_content: str) -> str:
+        """
+        从“八字排盘与五行分析”模块的内容中提取核心命理判断，
+        供后续模块作为上下文使用。
+        """
+        prompt = f"""
+        以下是针对某个八字生成的“八字排盘与五行分析”报告内容。请你作为专业的八字命理师，
+        从这段内容中提取并概括出以下核心信息：
+        - 日主的强弱（是身强、身弱、从强、从弱等）
+        - 八字中各五行的旺衰情况（哪个五行最旺，哪个最弱，是否有缺失）
+        - 初步判定的喜用神是什么（如果有明确提到）
+        - 命局中最显著的一两个十神及其对命主性格或运势的初步影响
+
+        请将这些信息组织成一段简洁、准确的中文概括，作为对该八字核心命理特征的统一总结。
+        这段总结将用于指导后续所有模块的分析，务必确保其准确性与一致性。
+        示例格式：
+        "此八字日主[日干]身[强/弱]，五行中[最旺五行]过旺，[最弱五行]偏弱，初步判断喜用神为[喜用神]。命局中[十神A]和[十神B]显著，预示命主..."
+        
+        请直接输出总结内容，不要包含任何额外说明或Markdown标题。
+
+        原始报告内容：
+        ```markdown
+        {bazi_analysis_content}
+        ```
+        """
+        # 使用较低的温度以确保总结的准确性和事实性
+        summary = await self._call_deepseek_api_async(prompt, temperature=0.3)
+        if "API Error:" in summary or "Error calling DeepSeek API:" in summary:
+            print(f"Error extracting core summary: {summary}")
+            return "核心命理分析提取失败，可能导致后续模块分析不一致。请检查API调用。"
+        return summary
+
 
     def calculate_simple_bazi(self, year: int, month: int, day: int, hour: int) -> Dict[str, str]:
         try:
             day_obj = sxtwl.fromSolar(year, month, day)
-            yTG = day_obj.getYearGZ()
-            mTG = day_obj.getMonthGZ()
+            year_gz = day_obj.getYearGZ()
+            month_gz = day_obj.getMonthGZ()
+            
             # 时柱
-            sTG = day_obj.getHourGZ(hour) # sxtwl uses 0-23 for hour directly for getHourGZ
+            hour_gz = day_obj.getHourGZ(hour) # sxtwl uses 0-23 for hour directly for getHourGZ
+            
             # 日柱
+            day_gz_obj = day_obj.getDayGZ() # Get current day's GZ first
             if hour == 23:
+                # If hour is 23, the day pillar actually belongs to the next day
                 new_year, new_month, new_day = get_next(year, month, day)
                 new_day_obj = sxtwl.fromSolar(new_year, new_month, new_day)
-                dTG = new_day_obj.getDayGZ()
-            else:
-                dTG = day_obj.getDayGZ()
+                day_gz_obj = new_day_obj.getDayGZ() # Update day_gz_obj to next day's GZ
             
             bazi_info = {
-                "year_gz": self.Gan[yTG.tg] + self.Zhi[yTG.dz],
-                "month_gz": self.Gan[mTG.tg] + self.Zhi[mTG.dz],
-                "day_gz": self.Gan[dTG.tg] + self.Zhi[dTG.dz],
-                "hour_gz": self.Gan[sTG.tg] + self.Zhi[sTG.dz]
+                "year_gz": self.Gan[year_gz.tg] + self.Zhi[year_gz.dz],
+                "month_gz": self.Gan[month_gz.tg] + self.Zhi[month_gz.dz],
+                "day_gz": self.Gan[day_gz_obj.tg] + self.Zhi[day_gz_obj.dz], # Corrected variable name
+                "hour_gz": self.Gan[hour_gz.tg] + self.Zhi[hour_gz.dz]
             }
             return bazi_info
         except Exception as e:
@@ -188,39 +222,25 @@ class DeepSeekBaziReport:
                 "day_gz": "计算错误", "hour_gz": "计算错误"
             }
 
-    def generate_free_report(self, bazi_str: str, gender: str) -> str:
-        prompt = f"""
-            请根据以下八字信息和性别，生成一份简要的免费八字命理报告。报告内容应直接呈现，无需额外解释或标题。
+    # Removed generate_free_report
 
-            八字：{bazi_str}
-            性别：{gender}
-
-            报告应包含以下几点，每点用1-2句话概括：
-            1.  **日主特性**: 简述日主（日干）的基本属性和特点。
-            2.  **性格概要**: 根据八字组合，概括主要的性格特征。
-            3.  **运势提醒**: 给出一条近期的或笼统的运势提醒。
-
-            请直接输出这份包含三点的简要报告。
-            """
-        return self._call_deepseek_api_sync(prompt, temperature=0.5) # Using sync version
-
-    # Premium modules will now be async
-    async def generate_bazi_analysis_module_async(self, bazi_str: str, gender: str, age_info: str) -> str: # ADDED age_info
+    # Premium modules will now be async and accept core_bazi_summary
+    async def generate_bazi_analysis_module_async(self, bazi_str: str, gender: str, age_info: str) -> str:
         prompt = f"""
             ### 八字排盘与五行分析
 
             针对八字：{bazi_str}，性别：{gender}，年龄: {age_info}。
             
-            **重要提示：** 请您在撰写此模块时，采用娓娓道来的叙述风格。同时要尽量做到客观，不要只输出好的方面，也要有坏的提醒。对于以下列出的每一个主要分析点（如“1. 四柱干支”、“2. 五行力量分析”等）及其内部的子项（若有），请不要只是简单罗列信息。而是针对每一项，都用3到5句完整且连贯的句子组成一个流畅的小段落来进行深入浅出的阐释。您的目标是让即使不熟悉八字命理的读者也能轻松理解各项分析的含义、逻辑及其对命主的影响。请保持专业的分析深度，同时确保语言通俗易懂。请直接以这样的叙述方式填充各个要点，并使用Markdown格式化您的输出，包括标题和必要的强调。
+            **重要提示：** 请您在撰写此模块时，采用娓娓道来的叙述风格。同时要尽量做到客观，不要只输出好的方面，也要有坏的提醒。对于以下列出的每一个主要分析点（如“1. 四柱干支”、“2. 五行力量分析”等）及其内部的子项（若有），请不要只是简单罗列信息。而是针对每一项，都用3到5句完整且连贯的句子组成一个流畅的小段落进行深入浅出的阐释。您的目标是让即使不熟悉八字命理的读者也能轻松理解各项分析的含义、逻辑及其对命主的影响。请保持专业的分析深度，同时确保语言通俗易懂。请直接以这样的叙述方式填充各个要点，并使用Markdown格式化您的输出，包括标题和必要的强调。
 
             首先，请用一个富有诗意的比喻，对这份八字的整体命运特征及一生进行3-4句话的艺术性概括。
             然后详细分析以下内容：
 
             1.  **四柱干支解读**：
-                *   年柱: [请在此处填写实际年柱干支]，并用3-5句完整连贯的话，阐述其在整个命盘中的基础意义，例如它通常代表着命主的祖上根基、早年运程（通常指16岁前）以及时代大环境所赋予的初始印记等。
-                *   月柱: [请在此处填写实际月柱干支]，并用3-5句完整连贯的话，阐述其关键作用，例如它深刻影响着命主的家庭环境、父母兄弟姐妹的关系、青少年时期的成长经历（通常指16-32岁），同时也是观察个人性格形成和事业发展潜力的重要窗口。
-                *   日柱: [请在此处填写实际日柱干支] (其中日干是：[日干])，并用3-5句完整连贯的话，详细说明此日干作为命主（也称日元或自身）的核心特质、本性以及内在驱动力，同时日支（也称夫妻宫）也揭示了命主中年运势（通常指32-48岁）、婚姻观念及与伴侣互动模式的初步信息。
-                *   时柱: [请在此处填写实际时柱干支]，并用3-5句完整连贯的话，阐述其所代表的晚年生活景象（通常指48岁后）、子女情况、个人深层追求、事业的最终成就或人生归宿等。
+                *   年柱: {bazi_str.split(' | ')[0].split(':')[1].strip()}，并用3-5句完整连贯的话，阐述其在整个命盘中的基础意义，例如它通常代表着命主的祖上根基、早年运程（通常指16岁前）以及时代大环境所赋予的初始印记等。
+                *   月柱: {bazi_str.split(' | ')[1].split(':')[1].strip()}，并用3-5句完整连贯的话，阐述其关键作用，例如它深刻影响着命主的家庭环境、父母兄弟姐妹的关系、青少年时期的成长经历（通常指16-32岁），同时也是观察个人性格形成和事业发展潜力的重要窗口。
+                *   日柱: {bazi_str.split(' | ')[2].split(':')[1].strip()} (其中日干是：{bazi_str.split(' | ')[2].split(':')[1].strip()[0]})，并用3-5句完整连贯的话，详细说明此日干作为命主（也称日元或自身）的核心特质、本性以及内在驱动力，同时日支（也称夫妻宫）也揭示了命主中年运势（通常指32-48岁）、婚姻观念及与伴侣互动模式的初步信息。
+                *   时柱: {bazi_str.split(' | ')[3].split(':')[1].strip()}，并用3-5句完整连贯的话，阐述其所代表的晚年生活景象（通常指48岁后）、子女情况、个人深层追求、事业的最终成就或人生归宿等。
 
             2.  **五行力量透析**：
                 *   请用3-5句完整连贯的话，详细说明此八字命局中金、木、水、火、土这五种元素各自的旺衰程度（例如，哪个五行力量最强，哪个相对较弱，是否有某个五行缺失）。
@@ -238,13 +258,16 @@ class DeepSeekBaziReport:
             """
         return await self._call_deepseek_api_async(prompt)
 
-    async def generate_mingge_decode_module_async(self, bazi_str: str, gender: str, age_info: str) -> str: # ADDED age_info
+    async def generate_mingge_decode_module_async(self, bazi_str: str, gender: str, age_info: str, core_bazi_summary: str) -> str:
         prompt = f"""
             ### 命格解码与人生特质
             
             针对八字：{bazi_str}，性别：{gender}，年龄: {age_info}。
-
-            **重要提示：** 请您在撰写此模块时，采用娓娓道来的叙述风格。同时要尽量做到客观，不要只输出好的方面，也要有坏的提醒。对于以下列出的每一个主要分析点及其内部的子项（若有），请不要只是简单罗列信息。而是针对每一项，都用3到5句完整且连贯的句子组成一个流畅的小段落来进行深入浅出的阐释。您的目标是让即使不熟悉八字命理的读者也能轻松理解各项分析的含义、逻辑及其对命主的影响。请保持专业的分析深度，同时确保语言通俗易懂。请直接以这样的叙述方式填充各个要点，并使用Markdown格式化您的输出。
+            
+            **核心命理基础：**
+            {core_bazi_summary}
+            
+            **重要提示：** 请您在撰写此模块时，采用娓娓道来的叙述风格，并且**务必严格遵循上述核心命理基础所确定的方向，确保本模块的所有分析与该基础信息保持高度一致性，避免任何矛盾之处。** 同时要尽量做到客观，不要只输出好的方面，也要有坏的提醒。对于以下列出的每一个主要分析点及其内部的子项（若有），请不要只是简单罗列信息。而是针对每一项，都用3到5句完整且连贯的句子组成一个流畅的小段落来进行深入浅出的阐释。您的目标是让即使不熟悉八字命理的读者也能轻松理解各项分析的含义、逻辑及其对命主的影响。请保持专业的分析深度，同时确保语言通俗易懂。请直接以这样的叙述方式填充各个要点，并使用Markdown格式化您的输出。
             
             请详细分析以下内容：
             
@@ -255,7 +278,6 @@ class DeepSeekBaziReport:
             2.  **性格特质深度描绘**：
                 *   请用3-5句完整连贯的话，融合对日主强弱、十神组合特点以及五行旺衰情况的综合分析，生动地描绘出命主在性格上可能展现的主要优点，例如积极进取、温和善良或是富有创造力等。
                 *   同样，请用3-5句完整连贯的话，客观地指出命主性格中可能存在的、需要留意的方面或潜在的缺点，例如可能比较固执、容易冲动或是内心较为敏感等。
-                *   再用3-5句完整连贯的话，分析并阐述命主基于其命格特质，可能拥有的独特天赋、潜在才能或特别擅长的领域，例如可能在艺术、技术、管理或沟通方面有过人之处。
                 *   最后，请用3-5句完整连贯的话，具体描述命主在日常生活中，为人处世可能展现出的主要行为模式和与人交往的鲜明特点。
 
             3.  **人生主要优势与潜在挑战**：
@@ -266,24 +288,25 @@ class DeepSeekBaziReport:
                 *   请用3-5句完整连贯的话，基于命局所反映出的深层信息，尝试推断并阐述命主在内心深处可能秉持的核心价值观是什么，例如是更看重成就感、家庭和谐、精神自由还是物质保障。
                 *   接着，请用3-5句完整连贯的话，进一步分析命主在人生中可能会努力追求的主要目标和生活理想是什么样的。
 
-            5. **本模块核心内容总结**:
-                *   请用3-5句完整连贯的话，对本模块（命格解码与人生特质）分析的关键内容和核心洞见进行一个简明扼要的总结，帮助读者回顾和把握重点。
             
             请确保分析深刻、富有洞察力，且行文流畅易懂。
             """
         return await self._call_deepseek_api_async(prompt)
 
-    async def generate_career_love_module_async(self, bazi_str: str, gender: str, age_info: str) -> str: # ADDED age_info
+    # NEW: Split career and love into two separate modules
+    async def generate_career_wealth_module_async(self, bazi_str: str, gender: str, age_info: str, core_bazi_summary: str) -> str:
         prompt = f"""
-            ### 事业财富与婚恋分析
+            ### 事业财富分析
             
             针对八字：{bazi_str}，性别：{gender}，年龄: {age_info}。
+            
+            **核心命理基础：**
+            {core_bazi_summary}
 
-            **重要提示：** 请您在撰写此模块时，采用娓娓道来的叙述风格。同时要尽量做到客观，不要只输出好的方面，也要有坏的提醒。对于以下列出的每一个主要分析点及其内部的子项（若有），请不要只是简单罗列信息。而是针对每一项，都用3到5句完整且连贯的句子组成一个流畅的小段落来进行深入浅出的阐释。您的目标是让即使不熟悉八字命理的读者也能轻松理解各项分析的含义、逻辑及其对命主的影响。请保持专业的分析深度，同时确保语言通俗易懂。请直接以这样的叙述方式填充各个要点，并使用Markdown格式化您的输出。
+            **重要提示：** 请您在撰写此模块时，采用娓娓道来的叙述风格，并且**务必严格遵循上述核心命理基础所确定的方向，确保本模块的所有分析与该基础信息保持高度一致性，避免任何矛盾之处。** 同时要尽量做到客观，不要只输出好的方面，也要有坏的提醒。对于以下列出的每一个主要分析点及其内部的子项（若有），请不要只是简单罗列信息。而是针对每一项，都用3到5句完整且连贯的句子组成一个流畅的小段落来进行深入浅出的阐释。您的目标是让即使不熟悉八字命理的读者也能轻松理解各项分析的含义、逻辑及其对命主的影响。请保持专业的分析深度，同时确保语言通俗易懂。请直接以这样的叙述方式填充各个要点，并使用Markdown格式化您的输出。
             
-            请分别详细分析事业财富和婚恋情感：
+            请详细分析事业财富：
             
-            **一、事业财富运程解析**
             1.  **优势行业与职业方向指引**：
                 *   请用3-5句完整连贯的话，根据此八字的五行喜用（即命局所喜的五行元素）以及显著的十神特性（例如，若食伤生财明显，可能适合创意或技艺求财；若官印相生，可能适合管理或学术领域），为命主建议一些相对更有利或更容易获得发展的行业领域。
                 *   接着，请用3-5句完整连贯的话，进一步分析并指出命主较为适合的职业发展方向或岗位类型，例如是偏向技术研发、市场营销、教育文化、还是自主经营等，并简述理由。
@@ -298,8 +321,24 @@ class DeepSeekBaziReport:
 
             4.  **事业贵人类型与提点**：
                 *   请用3-5句完整连贯的话，分析在命主的事业发展道路上，最有可能遇到何种类型的贵人（例如，是年长的上司、同辈的朋友还是某个特定属相的人），这些贵人可能会在哪些方面给予重要的帮助或指点。
+            
+            请确保分析具体、实用，结论有据可循，文字亲切易懂。
+            """
+        return await self._call_deepseek_api_async(prompt)
 
-            **二、婚恋情感运程探索**
+    async def generate_love_marriage_module_async(self, bazi_str: str, gender: str, age_info: str, core_bazi_summary: str) -> str:
+        prompt = f"""
+            ### 婚恋情感分析
+            
+            针对八字：{bazi_str}，性别：{gender}，年龄: {age_info}。
+            
+            **核心命理基础：**
+            {core_bazi_summary}
+
+            **重要提示：** 请您在撰写此模块时，采用娓娓道来的叙述风格，并且**务必严格遵循上述核心命理基础所确定的方向，确保本模块的所有分析与该基础信息保持高度一致性，避免任何矛盾之处。** 同时要尽量做到客观，不要只输出好的方面，也要有坏的提醒。对于以下列出的每一个主要分析点及其内部的子项（若有），请不要只是简单罗列信息。而是针对每一项，都用3到5句完整且连贯的句子组成一个流畅的小段落来进行深入浅出的阐释。您的目标是让即使不熟悉八字命理的读者也能轻松理解各项分析的含义、逻辑及其对命主的影响。请保持专业的分析深度，同时确保语言通俗易懂。请直接以这样的叙述方式填充各个要点，并使用Markdown格式化您的输出。
+            
+            请详细探索婚恋情感：
+            
             1.  **婚恋观念剖析与择偶偏好**：
                 *   请用3-5句完整连贯的话，深入分析命主在婚恋关系中可能持有的核心观念，例如是更向往浪漫激情、注重现实条件、渴望精神共鸣还是追求平淡安稳。
                 *   接着，请用3-5句完整连贯的话，具体描述命主在选择伴侣时，内心深处可能会比较看重对方具备哪些条件或特质，例如外貌、才华、经济实力、性格相投或是家庭背景等。
@@ -319,13 +358,17 @@ class DeepSeekBaziReport:
             """
         return await self._call_deepseek_api_async(prompt)
 
-    async def generate_health_advice_module_async(self, bazi_str: str, gender: str, age_info: str) -> str: # ADDED age_info
+
+    async def generate_health_advice_module_async(self, bazi_str: str, gender: str, age_info: str, core_bazi_summary: str) -> str:
         prompt = f"""
             ### 五行健康与养生建议
             
             针对八字：{bazi_str}，性别：{gender}，年龄: {age_info}。
+            
+            **核心命理基础：**
+            {core_bazi_summary}
 
-            **重要提示：** 请您在撰写此模块时，采用娓娓道来的叙述风格。对于以下列出的每一个主要分析点及其内部的子项（若有），请不要只是简单罗列信息。而是针对每一项，都用3到5句完整且连贯的句子组成一个流畅的小段落来进行深入浅出的阐释。您的目标是让即使不熟悉八字命理的读者也能轻松理解各项分析的含义、逻辑及其对命主的影响。请保持专业的分析深度，同时确保语言通俗易懂。请直接以这样的叙述方式填充各个要点，并使用Markdown格式化您的输出。
+            **重要提示：** 请您在撰写此模块时，采用娓娓道来的叙述风格，并且**务必严格遵循上述核心命理基础所确定的方向，确保本模块的所有分析与该基础信息保持高度一致性，避免任何矛盾之处。** 对于以下列出的每一个主要分析点及其内部的子项（若有），请不要只是简单罗列信息。而是针对每一项，都用3到5句完整且连贯的句子组成一个流畅的小段落来进行深入浅出的阐释。您的目标是让即使不熟悉八字命理的读者也能轻松理解各项分析的含义、逻辑及其对命主的影响。请保持专业的分析深度，同时确保语言通俗易懂。请直接以这样的叙述方式填充各个要点，并使用Markdown格式化您的输出。
             
             请详细分析以下内容：
             
@@ -350,8 +393,7 @@ class DeepSeekBaziReport:
             """
         return await self._call_deepseek_api_async(prompt)
 
-    # Modified generate_fortune_flow_module_async to use internal _calculate_dayun and accept age_info
-    async def generate_fortune_flow_module_async(self, bazi_str: str, gender: str, year: int, month: int, day: int, hour: int, age_info: str) -> str: # ADDED age_info
+    async def generate_fortune_flow_module_async(self, bazi_str: str, gender: str, year: int, month: int, day: int, hour: int, age_info: str, core_bazi_summary: str) -> str:
         # Call the integrated _calculate_dayun method
         dayun_calc_result = self._calculate_dayun(year, month, day, hour, sex=gender)
 
@@ -377,7 +419,10 @@ class DeepSeekBaziReport:
             大运列表:
             {dayun_list_str_for_prompt}
 
-            **重要提示：** 请您在撰写此模块时，采用娓娓道来的叙述风格，注意采用与命主年龄相匹配的叙述。同时要尽量做到客观，不要只输出好的方面，也要有坏的提醒。对于以下列出的每一个主要分析点及其内部的子项（若有），请不要只是简单罗列信息。而是针对每一项，都用3到5句完整且连贯的句子组成一个流畅的小段落来进行深入浅出的阐释。您的目标是让即使不熟悉八字命理的读者也能轻松理解各项分析的含义、逻辑及其对命主的影响。请保持专业的分析深度，同时确保语言通俗易懂。请直接以这样的叙述方式填充各个要点，并使用Markdown格式化您的输出。
+            **核心命理基础：**
+            {core_bazi_summary}
+
+            **重要提示：** 请您在撰写此模块时，采用娓娓道来的叙述风格，注意采用与命主年龄相匹配的叙述。并且**务必严格遵循上述核心命理基础所确定的方向，确保本模块的所有分析与该基础信息保持高度一致性，避免任何矛盾之处。** 同时要尽量做到客观，不要只输出好的方面，也要有坏的提醒。对于以下列出的每一个主要分析点及其内部的子项（若有），请不要只是简单罗列信息。而是针对每一项，都用3到5句完整且连贯的句子组成一个流畅的小段落来进行深入浅出的阐释。您的目标是让即使不熟悉八字命理的读者也能轻松理解各项分析的含义、逻辑及其对命主的影响。请保持专业的分析深度，同时确保语言通俗易懂。请直接以这样的叙述方式填充各个要点，并使用Markdown格式化您的输出。
 
             请进行未来运势趋势分析：
 
@@ -454,15 +499,16 @@ class DeepSeekBaziReport:
             hour_gz = birth_day_obj.getHourGZ(hour)
             if hour == 23:
                 new_year, new_month, new_day = get_next(year, month, day)
-                new_birth_day_obj = sxtwl.fromSolar(new_year, new_month, new_day)
-                day_gz = new_birth_day_obj.getDayGZ()
+                new_day_obj = sxtwl.fromSolar(new_year, new_month, new_day)
+                day_gz = new_day_obj.getDayGZ() # Changed to assign to day_gz directly
             else:
-                day_gz = birth_day_obj.getDayGZ()
+                day_gz = birth_day_obj.getDayGZ() # Changed to assign to day_gz directly
+            
             bazi_pillars = {
-                "年柱": self._gz_to_str(year_gz),
-                "月柱": self._gz_to_str(month_gz),
-                "日柱": self._gz_to_str(day_gz),
-                "时柱": self._gz_to_str(hour_gz),
+                "年柱": self.Gan[year_gz.tg] + self.Zhi[year_gz.dz],
+                "月柱": self.Gan[month_gz.tg] + self.Zhi[month_gz.dz],
+                "日柱": self.Gan[day_gz.tg] + self.Zhi[day_gz.dz], # Corrected variable name from dTG to day_gz
+                "时柱": self.Gan[hour_gz.tg] + self.Zhi[hour_gz.dz]
             }
 
             # 4. 确定排运方向 (阳男顺、阴女顺；阳女逆、阴男逆)
@@ -487,10 +533,12 @@ class DeepSeekBaziReport:
                 key=lambda x: x.jd
             )
             
-            # 过滤掉“中气”，只保留“节令” (jqIndex 位于 JIE_QI_INDICES 中的是节令)
+            # 过滤掉“中气”，只保留“节令” (jqIndex % 2 != 0)
+            # sxtwl的节气索引约定：0: 冬至(气), 1: 小寒(节), 2: 大寒(气), 3: 立春(节), ...
+            # 奇数索引对应的是“节”，例如1(小寒), 3(立春), 5(惊蛰)
             filtered_jieqi = [jq for jq in all_sorted_jieqi if jq.jqIndex % 2 != 0]
 
-            target_jieqi_obj = None # 最终确定用于计算第一步大运结束（即第二步大运开始）时的节气点
+            target_jieqi_obj = None 
             
             idx_birth_jieqi_after = -1 
             for i, jq in enumerate(filtered_jieqi):
@@ -498,15 +546,18 @@ class DeepSeekBaziReport:
                     idx_birth_jieqi_after = i
                     break
             
-            if idx_birth_jieqi_after == -1:
-                raise ValueError("未能找到出生时间之后的任何有效节令，请检查日期或库数据（可能年份范围太小或数据异常）。")
-
+            # Error handling for edge cases where no jieqi is found after or before
             if direction_sign == 1: # 顺排：寻找出生时间后的第一个节令
+                if idx_birth_jieqi_after == -1 or idx_birth_jieqi_after >= len(filtered_jieqi):
+                    raise ValueError(f"顺排：未能找到出生时间 {birth_time_obj.toStr()} 之后的有效节令。请检查日期范围或节气数据。")
                 target_jieqi_obj = filtered_jieqi[idx_birth_jieqi_after]
             else: # 逆排：寻找出生时间前的第一个节令
-                if idx_birth_jieqi_after == 0:
-                    raise ValueError("未能找到出生时间之前的任何有效节令（出生日期可能过早，或节气数据不全）。")
-                target_jieqi_obj = filtered_jieqi[idx_birth_jieqi_after - 1]
+                if idx_birth_jieqi_after == 0: # birth_jd is before the first 'jie' in the list
+                     raise ValueError(f"逆排：未能找到出生时间 {birth_time_obj.toStr()} 之前的有效节令（可能日期过早或数据不全）。")
+                if idx_birth_jieqi_after == -1: # birth_jd is after all 'jie' in the list, so take the last one
+                    target_jieqi_obj = filtered_jieqi[-1]
+                else: # birth_jd is between filtered_jieqi[idx_birth_jieqi_after-1] and filtered_jieqi[idx_birth_jieqi_after]
+                    target_jieqi_obj = filtered_jieqi[idx_birth_jieqi_after - 1]
 
             target_jieqi_jd = target_jieqi_obj.jd
             target_jieqi_time_obj = sxtwl.JD2DD(target_jieqi_jd) 
@@ -519,45 +570,44 @@ class DeepSeekBaziReport:
             second_dayun_start_age_float = day_difference_float / 3
             second_dayun_start_age_decimal_display = round(second_dayun_start_age_float, 1)
 
-            # 根据截图规则，确定大运表格中显示的第二个十年期大运的起运年龄
-            next_dayun_start_age_display = int(math.ceil(second_dayun_start_age_float))
-            # 进一步细化截图规则：如果精确年龄 X.Y 等于0.0，表格中的下一个大运（即第一步大运结束后）的起始年龄显示为1。
-            # 否则，显示为 ceil(X.Y) + 1。
-            if second_dayun_start_age_decimal_display == 0.0:
-                next_dayun_start_age_display = 1
-            else:
-                next_dayun_start_age_display = int(math.ceil(second_dayun_start_age_float)) + 1
+            # 确定大运表格中显示的第二个十年期大运的起运年龄 (虚岁)
+            # 如果计算出的精确年龄（X.Y）非常小（例如小于1），则第一个实际起运的大运通常显示为1岁起运。
+            # 否则，从计算出的精确年龄向上取整作为起运年龄。
+            start_age_for_second_decade_display = int(math.ceil(second_dayun_start_age_float))
+            if start_age_for_second_decade_display == 0 and second_dayun_start_age_float == 0.0:
+                start_age_for_second_decade_display = 1 # Edge case: if literally 0.0, it means it started at 1
+            elif start_age_for_second_decade_display == 0 and second_dayun_start_age_float > 0.0: # like 0.1 to 0.999...
+                start_age_for_second_decade_display = 1
 
 
             # 7. 排列大运
             dayun_list = []
-            # 大运的起始干支就是月柱本身 (根据截图)
             current_dayun_gz = month_gz 
             
             # 第一个大运的起运虚岁总是显示为1岁
             first_dayun_display_start_age = 1 
 
-            # 生成第一步大运的信息 (特殊处理年龄区间)
+            # 生成第一步大运的信息
             first_dayun_pillar_str = self._gz_to_str(current_dayun_gz)
-            # 根据截图，第一步大运的年龄区间是 1~ (下一个大运起始年龄 - 1)
-            first_dayun_age_range_str = f"{first_dayun_display_start_age}~{next_dayun_start_age_display - 1}岁"
+            # 第一步大运的年龄区间是 1岁 到 (第二步大运起始年龄 - 1)岁
+            first_dayun_age_range_str = f"{first_dayun_display_start_age}~{max(first_dayun_display_start_age, start_age_for_second_decade_display - 1)}岁"
             
             dayun_list.append({
                 "大运柱": first_dayun_pillar_str,
-                "起运虚岁": first_dayun_display_start_age, # 显示1岁
+                "起运虚岁": first_dayun_display_start_age, 
                 "年龄区间": first_dayun_age_range_str
             })
 
-            # 准备下一个大运的干支
+            # 准备下一个大运的干支（用于后续的10年大运）
             if direction_sign == 1: # 顺排
                 current_dayun_gz = self._get_next_gz(current_dayun_gz)
             else: # 逆排
                 current_dayun_gz = self._get_prev_gz(current_dayun_gz)
             
             # 从第二步大运开始，年龄按照 10年递增
-            current_start_age_for_loop = next_dayun_start_age_display # 从第二步大运的显示年龄开始
+            current_start_age_for_loop = start_age_for_second_decade_display 
 
-            # 循环生成后续9步大运 (总共10步)
+            # 循环生成后续9步大运 (总共10步，第一步已处理)
             for i in range(9): 
                 pillar_str = self._gz_to_str(current_dayun_gz)
                 age_range_str = f"{current_start_age_for_loop}岁至{current_start_age_for_loop + 9}岁"
@@ -582,14 +632,14 @@ class DeepSeekBaziReport:
 
             return {
                 "出生日期": f"{year}年{month}月{day}日 {hour:02d}:{minute:02d}:{second:02d} ({'男' if sex == '男' else '女'})",
-                "年龄": age_info_internal, # Keep this for consistency if needed by other internal logic
+                "年龄": age_info_internal, 
                 "八字四柱": bazi_pillars,
                 "起运信息": {
                     "排运方向": start_direction,
                     "从出生到第二步大运开始的精确天数": day_difference_round_int, 
                     "第二步大运开始的起运日期和精确虚岁": 
                         f"{int(target_jieqi_time_obj.Y)}年{int(target_jieqi_time_obj.M)}月{int(target_jieqi_time_obj.D)}日 {int(target_jieqi_time_obj.h):02d}:{int(target_jieqi_time_obj.m):02d}:{int(round(target_jieqi_time_obj.s)):02d} ({second_dayun_start_age_decimal_display:.1f}) 起运",
-                    "第二步大运的起始虚岁 (表格顶部显示)": next_dayun_start_age_display,
+                    "第二步大运的起始虚岁 (表格顶部显示)": start_age_for_second_decade_display, 
                     "第二步大运开始的节气名称": self.jqmc[target_jieqi_obj.jqIndex],
                 },
                 "大运": dayun_list
@@ -597,4 +647,4 @@ class DeepSeekBaziReport:
 
         except Exception as e:
             print(f"计算出错：{e}")
-            return None # Return None or an empty dict to indicate error.
+            return None
