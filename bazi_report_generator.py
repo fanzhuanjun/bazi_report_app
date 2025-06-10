@@ -8,6 +8,27 @@ import asyncio
 import math
 import datetime
 
+def get_next(year, month, day):
+    """
+    Returns the next day as a tuple (year, month, day)
+    
+    Parameters:
+    year (int): The year
+    month (int): The month (1-12)
+    day (int): The day (1-31, depending on month)
+    
+    Returns:
+    tuple: (next_year, next_month, next_day)
+    """
+    try:
+        current_date = datetime.date(year, month, day)
+        next_date = current_date + datetime.timedelta(days=1)
+        return (next_date.year, next_date.month, next_date.day)
+    except ValueError as e:
+        raise ValueError("Invalid date input") from e
+
+
+
 class DeepSeekBaziReport:
     def __init__(self, api_key: str):
         self.api_key = api_key
@@ -141,8 +162,15 @@ class DeepSeekBaziReport:
             day_obj = sxtwl.fromSolar(year, month, day)
             yTG = day_obj.getYearGZ()
             mTG = day_obj.getMonthGZ()
-            dTG = day_obj.getDayGZ()
+            # 时柱
             sTG = day_obj.getHourGZ(hour) # sxtwl uses 0-23 for hour directly for getHourGZ
+            # 日柱
+            if hour == 23:
+                new_year, new_month, new_day = get_next(year, month, day)
+                new_day_obj = sxtwl.fromSolar(new_year, new_month, new_day)
+                dTG = new_day_obj.getDayGZ()
+            else:
+                dTG = day_obj.getDayGZ()
             
             bazi_info = {
                 "year_gz": self.Gan[yTG.tg] + self.Zhi[yTG.dz],
@@ -421,9 +449,14 @@ class DeepSeekBaziReport:
             # 3. 获取八字四柱
             year_gz = birth_day_obj.getYearGZ() # 以立春为界
             month_gz = birth_day_obj.getMonthGZ()
-            day_gz = birth_day_obj.getDayGZ()
+            
             hour_gz = birth_day_obj.getHourGZ(hour)
-
+            if hour == 23:
+                new_year, new_month, new_day = get_next(year, month, day)
+                new_birth_day_obj = sxtwl.fromSolar(new_year, new_month, new_day)
+                day_gz = new_birth_day_obj.getDayGZ()
+            else:
+                day_gz = birth_day_obj.getDayGZ()
             bazi_pillars = {
                 "年柱": self._gz_to_str(year_gz),
                 "月柱": self._gz_to_str(month_gz),
