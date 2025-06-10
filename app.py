@@ -111,16 +111,24 @@ custom_css = """
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
+# --- Define report type to module mapping (Moved to global scope) ---
+REPORT_MODULES_MAP = {
+    "姻缘定制版": ["八字排盘与五行分析", "命格解码与人生特质", "婚恋情感分析", "五行健康与养生建议", "大运流年运势推演"],
+    "事业财富版": ["八字排盘与五行分析", "命格解码与人生特质", "事业财富分析", "五行健康与养生建议", "大运流年运势推演"],
+    "初级版": ["八字排盘与五行分析", "命格解码与人生特质", "五行健康与养生建议", "大运流年运势推演"],
+    "完整版": ["八字排盘与五行分析", "命格解码与人生特质", "事业财富分析", "婚恋情感分析", "五行健康与养生建议", "大运流年运势推演"]
+}
 
 # Helper class for premium report generation
 class PremiumReportGenerator:
-    def __init__(self, bazi_engine, bazi_str, gender, tab_titles, generation_methods_map_async, age_info): # ADDED age_info
+    def __init__(self, bazi_engine, bazi_str, gender, report_type_modules_ordered, generation_methods_map_async, age_info):
         self.bazi_engine = bazi_engine
         self.bazi_str = bazi_str
         self.gender = gender
-        self.tab_titles = tab_titles
+        # The specific ordered list of modules for the selected report type
+        self.report_type_modules_ordered = report_type_modules_ordered 
         self.generation_methods_map_async = generation_methods_map_async
-        self.age_info = age_info # STORED age_info
+        self.age_info = age_info
         
         self.generated_modules = {}
         self.overall_success = True
@@ -128,41 +136,109 @@ class PremiumReportGenerator:
         self.progress_bar_ui = None
         self.text_status_ui = None
 
-    async def _generate_module_task(self, title):
-        method_to_call = self.generation_methods_map_async[title]
+    # Helper async function to run a module generation and return its title and content
+    async def _generate_module_and_return_title(self, title: str, method_call, *args, **kwargs):
         try:
-            # The lambda functions in app.py are now responsible for passing the correct arguments,
-            # including bazi_str, gender, and age_info consistently.
-            content = await method_to_call(self.bazi_str, self.gender, self.age_info) 
-            
-            self.generated_modules[title] = content
-            if "API Error:" in content or "Error calling DeepSeek API:" in content:
-                self.overall_success = False
+            content = await method_call(*args, **kwargs)
+            # Check for API errors or specific error messages from the LLM responses
+            if "API Error:" in content or "Error calling DeepSeek API:" in content or \
+               ("生成模块" in content and "时发生" in content) or ("意外错误" in content):
+                return title, content, False # Return content and indicate failure
+            return title, content, True # Return content and indicate success
         except Exception as e:
-            self.generated_modules[title] = f"生成模块 '{title}' 时发生意外错误: {str(e)}"
-            self.overall_success = False
-        return title
+            return title, f"生成模块 '{title}' 时发生意外错误: {str(e)}", False # Return error and indicate failure
 
     async def run_all_concurrently(self, progress_bar_ui, text_status_ui):
         self.progress_bar_ui = progress_bar_ui
         self.text_status_ui = text_status_ui
         
-        tasks = [self._generate_module_task(title) for title in self.tab_titles]
+        total_modules = len(self.report_type_modules_ordered)
+        core_bazi_summary = "" # Initialize core summary
         
-        num_completed = 0
-        total_modules = len(self.tab_titles)
-        
-        # Initialize progress bar and text
         self.progress_bar_ui.progress(0)
         self.text_status_ui.text(f"⏳ 准备开始生成报告模块... (0/{total_modules})")
 
-        for future in asyncio.as_completed(tasks):
-            completed_task_title = await future 
-            num_completed += 1
+        # --- Phase 1: Generate the first module (always "八字排盘与五行分析") and extract core summary (sequential) ---
+        # The user's new report types all start with "八字排盘与五行分析", so this remains valid.
+        first_module_title = self.report_type_modules_ordered[0] # This should always be "八字排盘与五行分析"
+        short_display_title_first = first_module_title.split('与')[0].split('和')[0]
+        self.text_status_ui.text(f"⏳ 正在生成 {short_display_title_first} 模块 (基础分析)...")
+        
+        # Directly call the first module generation
+        first_module_content = ""
+        try:
+            first_module_content_raw = await self.generation_methods_map_async[first_module_title](self.bazi_str, self.gender, self.age_info)
             
-            short_display_title = completed_task_title.split('与')[0].split('和')[0]
-            # Update text and progress bar
-            self.text_status_ui.text(f"⏳ 正在生成 {short_display_title} 模块... ({num_completed}/{total_modules})")
+            if "API Error:" in first_module_content_raw or "Error calling DeepSeek API:" in first_module_content_raw or \
+               ("生成模块" in first_module_content_raw and "意外错误" in first_module_content_raw):
+                self.overall_success = False
+                first_module_content = f"⚠️ 八字排盘与五行分析模块生成失败。错误信息: {first_module_content_raw}\n\n请重试。\n\n" + first_module_content_raw
+                core_bazi_summary = "核心命理分析提取失败，后续模块可能不一致。原始八字排盘模块有错误。"
+            else:
+                first_module_content = first_module_content_raw
+                self.text_status_ui.text(f"⏳ 正在提取核心命理摘要...")
+                core_bazi_summary_raw = await self.bazi_engine._extract_core_bazi_summary(first_module_content_raw)
+                
+                if "API Error:" in core_bazi_summary_raw:
+                    self.overall_success = False
+                    st.warning(f"核心命理摘要提取失败: {core_bazi_summary_raw}. 后续模块可能缺乏一致性。")
+                    core_bazi_summary = "未能成功提取核心命理摘要，后续分析可能不一致。"
+                else:
+                    core_bazi_summary = core_bazi_summary_raw
+                st.session_state.debug_core_summary = core_bazi_summary # Store for potential debugging
+        except Exception as e:
+            self.overall_success = False
+            first_module_content = f"生成模块 '{first_module_title}' 时发生意外错误: {str(e)}"
+            core_bazi_summary = "核心命理分析提取失败，后续模块可能不一致。原始八字排盘模块有意外错误。"
+        
+        self.generated_modules[first_module_title] = first_module_content
+
+        # After the first module (and summary extraction), update progress to show one module done
+        num_completed = 1 
+        self.progress_bar_ui.progress(num_completed / total_modules)
+        self.text_status_ui.text(f"✅ 完成 {short_display_title_first} 模块. ({num_completed}/{total_modules})")
+
+        # --- Phase 2: Generate remaining modules concurrently ---
+        remaining_titles = self.report_type_modules_ordered[1:]
+        tasks = []
+        for title in remaining_titles:
+            method_to_call = self.generation_methods_map_async[title]
+            if title == "大运流年运势推演":
+                task = asyncio.create_task(
+                    self._generate_module_and_return_title(
+                        title, # Pass title explicitly
+                        method_to_call,
+                        self.bazi_str, self.gender,
+                        st.session_state.bazi_info_for_display['year'],
+                        st.session_state.bazi_info_for_display['month'],
+                        st.session_state.bazi_info_for_display['day'],
+                        st.session_state.bazi_info_for_display['hour'],
+                        self.age_info,
+                        core_bazi_summary # Pass the core summary
+                    )
+                )
+            else:
+                task = asyncio.create_task(
+                    self._generate_module_and_return_title(
+                        title, # Pass title explicitly
+                        method_to_call,
+                        self.bazi_str, self.gender, self.age_info, core_bazi_summary
+                    )
+                )
+            tasks.append(task)
+        
+        # Concurrently wait for the remaining tasks to complete
+        for future in asyncio.as_completed(tasks):
+            # Now, 'future' will directly yield (title, content, success_status) from _generate_module_and_return_title
+            completed_task_title, content, module_success = await future
+            
+            self.generated_modules[completed_task_title] = content
+            if not module_success:
+                self.overall_success = False
+            
+            num_completed += 1
+            short_display_title_current = completed_task_title.split('与')[0].split('和')[0]
+            self.text_status_ui.text(f"⏳ 正在生成 {short_display_title_current} 模块... ({num_completed}/{total_modules})")
             self.progress_bar_ui.progress(num_completed / total_modules)
             
         self.text_status_ui.text(f"✅ 所有报告模块生成完毕! ({total_modules}/{total_modules})") # Final status
@@ -174,10 +250,11 @@ if 'report_generated_successfully' not in st.session_state:
     st.session_state.report_generated_successfully = False
 if 'bazi_info_for_display' not in st.session_state:
     st.session_state.bazi_info_for_display = {}
-if 'free_report_content' not in st.session_state:
-    st.session_state.free_report_content = ""
+# Removed 'free_report_content' as it's no longer used
 if 'premium_modules_content' not in st.session_state:
     st.session_state.premium_modules_content = {}
+if 'debug_core_summary' not in st.session_state: 
+    st.session_state.debug_core_summary = ""
 
 # Default birth date calculation - robustly handle month/day for default
 try:
@@ -191,13 +268,13 @@ if 'user_inputs' not in st.session_state:
         "birth_date": default_birth_date,
         "hour": 12,
         "gender": '男',
-        "report_type": '免费版报告 (简要)'
+        "report_type": '初级版' # Updated default report type
     }
 
 def clear_all_data_and_rerun():
     keys_to_delete = [
         'report_generated_successfully', 'bazi_info_for_display',
-        'free_report_content', 'premium_modules_content'
+        'premium_modules_content', 'debug_core_summary' 
     ]
     for key in keys_to_delete:
         if key in st.session_state:
@@ -215,7 +292,7 @@ def clear_all_data_and_rerun():
         "birth_date": default_date_val,
         "hour": 12,
         "gender": '男',
-        "report_type": '免费版报告 (简要)'
+        "report_type": '初级版' # Updated default report type
     }
     st.session_state.report_generated_successfully = False
     st.rerun()
@@ -223,7 +300,7 @@ def clear_all_data_and_rerun():
 
 # --- 侧边栏：保留清除按钮 ---
 with st.sidebar:
-    st.markdown("## ⚙️ 操作") # Changed title
+    st.markdown("## ⚙️ 操作") 
     st.markdown("---")
 
     if st.session_state.get('report_generated_successfully', False):
@@ -239,7 +316,7 @@ st.markdown("<h1 class='app-main-title'>✨ 反转实验室 专业八字命理�
 st.markdown("<p class='app-subtitle'>探索传统智慧，洞悉人生奥秘。请输入您的信息并生成定制命理分析。</p>", unsafe_allow_html=True)
 
 # --- START OF MOVED INPUT SECTION ---
-st.markdown("---") # Separator before input section
+st.markdown("---") 
 st.markdown("### 🗓️ 请输入您的个人信息")
 
 # Date and time related variables
@@ -268,7 +345,7 @@ with col1:
         value=st.session_state.user_inputs['birth_date'],
         min_value=min_date,
         max_value=max_date,
-        key="birth_date_input_main", # Changed key
+        key="birth_date_input_main", 
         format="YYYY-MM-DD"
     )
     gender_options = ('男', '女')
@@ -277,32 +354,34 @@ with col1:
     except ValueError:
         current_gender_index = 0
     st.session_state.user_inputs['gender'] = st.radio(
-        "您的性别", gender_options, index=current_gender_index, key="gender_input_main", horizontal=True # Changed key
+        "您的性别", gender_options, index=current_gender_index, key="gender_input_main", horizontal=True 
     )
 
 with col2:
     st.session_state.user_inputs['hour'] = st.number_input(
         "出生时辰 (24小时制, 0-23)", min_value=0, max_value=23,
-        value=st.session_state.user_inputs['hour'], step=1, key="hour_input_main" # Changed key
+        value=st.session_state.user_inputs['hour'], step=1, key="hour_input_main" 
     )
-    report_type_options = ('免费版报告 (简要)', '付费版报告 (专业详细)')
+    # Updated report type options
+    report_type_options = ('姻缘定制版', '事业财富版', '初级版', '完整版')
     try:
         current_report_type_index = report_type_options.index(st.session_state.user_inputs['report_type'])
     except ValueError:
         current_report_type_index = 0
     st.session_state.user_inputs['report_type'] = st.radio(
-        "选择报告类型", report_type_options, index=current_report_type_index, key="report_type_input_main" # Changed key
+        "选择报告类型", report_type_options, index=current_report_type_index, key="report_type_input_main" 
     )
 
 # Placeholder for errors and status messages related to input and generation button
 main_input_area_error_placeholder = st.empty() 
 main_input_area_status_container = st.empty()
 
-if st.button("🚀 生成报告", type="primary", disabled=st.session_state.get('report_generated_successfully', False), use_container_width=True, key="generate_report_main"): # Changed key
+if st.button("🚀 生成报告", type="primary", disabled=st.session_state.get('report_generated_successfully', False), use_container_width=True, key="generate_report_main"): 
     st.session_state.report_generated_successfully = False
     st.session_state.bazi_info_for_display = {}
-    st.session_state.free_report_content = ""
+    # Removed clearing of free_report_content
     st.session_state.premium_modules_content = {}
+    st.session_state.debug_core_summary = "" # Clear debug summary on new generation
 
     birth_date_obj = st.session_state.user_inputs['birth_date']
     year = birth_date_obj.year
@@ -349,73 +428,68 @@ if st.button("🚀 生成报告", type="primary", disabled=st.session_state.get(
         "age_info": age_info_str
     }
     
-    if selected_report_type == '免费版报告 (简要)':
-        with main_input_area_status_container, st.spinner("正在努力生成您的免费八字报告，请稍候..."): 
-            generated_report_content = bazi_engine.generate_free_report(bazi_string_representation, selected_gender)
-        
-        main_input_area_status_container.empty() 
-
-        if "API Error:" in generated_report_content or "Error calling DeepSeek API:" in generated_report_content:
-            main_input_area_error_placeholder.error(f"生成免费报告时遇到问题：{generated_report_content}")
-        else:
-            st.session_state.free_report_content = generated_report_content
-            st.session_state.report_generated_successfully = True
+    # Get the specific modules for the selected report type
+    selected_modules_for_generation = REPORT_MODULES_MAP.get(selected_report_type, [])
     
-    else: # 付费版报告 (专业详细)
-        tab_titles = ["八字排盘与五行分析", "命格解码与人生特质", "事业财富与婚恋分析", "五行健康与养生建议", "大运流年运势推演"]
-        
-        generation_methods_map_async = {
-            "八字排盘与五行分析": lambda bazi_str_arg, gender_arg, age_info_arg: bazi_engine.generate_bazi_analysis_module_async(bazi_str_arg, gender_arg, age_info_arg),
-            "命格解码与人生特质": lambda bazi_str_arg, gender_arg, age_info_arg: bazi_engine.generate_mingge_decode_module_async(bazi_str_arg, gender_arg, age_info_arg),
-            "事业财富与婚恋分析": lambda bazi_str_arg, gender_arg, age_info_arg: bazi_engine.generate_career_love_module_async(bazi_str_arg, gender_arg, age_info_arg),
-            "五行健康与养生建议": lambda bazi_str_arg, gender_arg, age_info_arg: bazi_engine.generate_health_advice_module_async(bazi_str_arg, gender_arg, age_info_arg),
-            "大运流年运势推演": lambda bazi_str_arg, gender_arg, age_info_arg: bazi_engine.generate_fortune_flow_module_async(
-                bazi_str_arg, gender_arg,
-                st.session_state.bazi_info_for_display['year'],
-                st.session_state.bazi_info_for_display['month'],
-                st.session_state.bazi_info_for_display['day'],
-                st.session_state.bazi_info_for_display['hour'],
-                age_info_arg
-            )
-        }
+    # Check if a valid report type was selected
+    if not selected_modules_for_generation:
+        main_input_area_error_placeholder.error(f"无效的报告类型：{selected_report_type}。请选择一个有效的报告类型。")
+        st.session_state.report_generated_successfully = False
+        st.stop()
 
-        report_generator_instance = PremiumReportGenerator(
-            bazi_engine, 
-            bazi_string_representation, 
-            selected_gender, 
-            tab_titles, 
-            generation_methods_map_async,
-            age_info_str
+    # Updated lambda functions to match the new method signatures in DeepSeekBaziReport
+    generation_methods_map_async = {
+        "八字排盘与五行分析": lambda bazi_str_arg, gender_arg, age_info_arg: \
+                              bazi_engine.generate_bazi_analysis_module_async(bazi_str_arg, gender_arg, age_info_arg),
+        "命格解码与人生特质": lambda bazi_str_arg, gender_arg, age_info_arg, core_summary_arg: \
+                              bazi_engine.generate_mingge_decode_module_async(bazi_str_arg, gender_arg, age_info_arg, core_summary_arg),
+        "事业财富分析": lambda bazi_str_arg, gender_arg, age_info_arg, core_summary_arg: \
+                              bazi_engine.generate_career_wealth_module_async(bazi_str_arg, gender_arg, age_info_arg, core_summary_arg),
+        "婚恋情感分析": lambda bazi_str_arg, gender_arg, age_info_arg, core_summary_arg: \
+                              bazi_engine.generate_love_marriage_module_async(bazi_str_arg, gender_arg, age_info_arg, core_summary_arg),
+        "五行健康与养生建议": lambda bazi_str_arg, gender_arg, age_info_arg, core_summary_arg: \
+                              bazi_engine.generate_health_advice_module_async(bazi_str_arg, gender_arg, age_info_arg, core_summary_arg),
+        "大运流年运势推演": lambda bazi_str_arg, gender_arg, year_arg, month_arg, day_arg, hour_arg, age_info_arg, core_summary_arg: \
+                              bazi_engine.generate_fortune_flow_module_async(bazi_str_arg, gender_arg, year_arg, month_arg, day_arg, hour_arg, age_info_arg, core_summary_arg)
+    }
+
+    report_generator_instance = PremiumReportGenerator(
+        bazi_engine, 
+        bazi_string_representation, 
+        selected_gender, 
+        selected_modules_for_generation, # Pass the dynamic list of modules
+        generation_methods_map_async,
+        age_info_str
+    )
+    
+    with main_input_area_status_container.container(): 
+        progress_bar_element = st.progress(0)
+        text_status_element = st.text("⏳ 准备开始生成报告模块...")
+
+    _generated_modules_result = {}
+    _overall_success_result = True
+
+    try:
+        _generated_modules_result, _overall_success_result = asyncio.run(
+            report_generator_instance.run_all_concurrently(progress_bar_element, text_status_element)
         )
-        
-        with main_input_area_status_container.container(): 
-            progress_bar_element = st.progress(0)
-            text_status_element = st.text("⏳ 准备开始生成报告模块...")
-
-        _generated_modules_result = {}
-        _overall_success_result = True
-
-        try:
-            _generated_modules_result, _overall_success_result = asyncio.run(
-                report_generator_instance.run_all_concurrently(progress_bar_element, text_status_element)
-            )
-        except Exception as e: 
-            main_input_area_error_placeholder.error(f"异步生成报告时发生系统错误: {e}")
-            _overall_success_result = False
-        
-        st.session_state.premium_modules_content = _generated_modules_result
-        if _generated_modules_result: 
-            st.session_state.report_generated_successfully = True 
-        
-        if not _overall_success_result:
-            pass 
+    except Exception as e: 
+        main_input_area_error_placeholder.error(f"异步生成报告时发生系统错误: {e}")
+        _overall_success_result = False
+    
+    st.session_state.premium_modules_content = _generated_modules_result
+    if _generated_modules_result and _overall_success_result: 
+        st.session_state.report_generated_successfully = True 
+    
+    if not _overall_success_result:
+        pass 
 
     if st.session_state.report_generated_successfully:
         main_input_area_error_placeholder.empty()
         main_input_area_status_container.empty() 
         st.rerun()
 
-st.markdown("---") # Separator after input section
+st.markdown("---") 
 # --- END OF MOVED INPUT SECTION ---
 
 
@@ -452,7 +526,8 @@ if st.session_state.get('report_generated_successfully', False):
         st.markdown(report_display_title_html, unsafe_allow_html=True)
 
         content_for_download = ""
-        report_filename_part = "免费版" if bazi_display_data['report_type'] == '免费版报告 (简要)' else "付费版"
+        # Use selected_report_type directly for filename
+        report_filename_part = bazi_display_data['report_type'] 
         
         download_file_header = f"""# 🔮 反转 专业八字命理报告
 **公历生日**: {bazi_display_data['year']}年{bazi_display_data['month']}月{bazi_display_data['day']}日 {bazi_display_data['hour']}时
@@ -464,53 +539,50 @@ if st.session_state.get('report_generated_successfully', False):
 """
         download_file_footer = """
 ---
-免责声明：本报告内容基于八字命理学理论，仅供参考，不构成任何决策的最终依据。命理学并非精密科学，请理性看待。
+免责声明：本报告内容基于八字命理学理论，仅供参考，不构成任何决策的最终依据。命理学并非精密科学，请理性看待。个人命运的塑造离不开主观能动性与实际行动，请您结合自身情况理性看待报告内容，不宜作为重大人生决策的唯一依据。
 """
+        # Debugging: show core summary for premium reports
+        if st.session_state.debug_core_summary: # No longer tied to "付费版报告" specifically
+            with st.expander("🔬 查看AI提取的核心命理摘要 (用于辅助一致性分析)"):
+                st.info(st.session_state.debug_core_summary)
 
-        if bazi_display_data['report_type'] == '免费版报告 (简要)':
-            report_content_to_show = st.session_state.free_report_content
-            if "API Error:" in report_content_to_show or "Error calling DeepSeek API:" in report_content_to_show:
-                st.error(f"免费报告生成失败：{report_content_to_show}") # This error will now show in main area
-                content_for_download = download_file_header + f"错误：{report_content_to_show}" + download_file_footer
-            else:
-                st.markdown(f"<div class='report-content'>{report_content_to_show}</div>", unsafe_allow_html=True)
-                content_for_download = download_file_header + report_content_to_show + download_file_footer
-        else: 
-            modules_to_show = st.session_state.premium_modules_content
-            tab_titles_ordered = ["八字排盘与五行分析", "命格解码与人生特质", "事业财富与婚恋分析", "五行健康与养生建议", "大运流年运势推演"]
-            tabs_display = st.tabs(tab_titles_ordered)
-            
-            premium_report_download_parts = [download_file_header]
-            all_modules_valid = True
-            for i, title in enumerate(tab_titles_ordered):
-                with tabs_display[i]:
-                    module_str_content = modules_to_show.get(title, "此模块内容未能成功加载。")
-                    is_error_content = "API Error:" in module_str_content or \
-                                       "Error calling DeepSeek API:" in module_str_content or \
-                                       ("生成模块" in module_str_content and "时发生" in module_str_content)
+        # All reports now use the module-based display
+        modules_to_show = st.session_state.premium_modules_content
+        # Use the modules determined by the selected report type for tab display
+        tabs_display = st.tabs(REPORT_MODULES_MAP[bazi_display_data['report_type']])
+        
+        premium_report_download_parts = [download_file_header]
+        all_modules_valid = True
+        for i, title in enumerate(REPORT_MODULES_MAP[bazi_display_data['report_type']]):
+            with tabs_display[i]:
+                module_str_content = modules_to_show.get(title, "此模块内容未能成功加载。")
+                is_error_content = "API Error:" in module_str_content or \
+                                   "Error calling DeepSeek API:" in module_str_content or \
+                                   ("生成模块" in module_str_content and "时发生" in module_str_content) or \
+                                   ("意外错误" in module_str_content) 
 
-                    if is_error_content:
-                        st.error(f"抱歉，'{title}' 模块内容生成时出错或未能加载：\n{module_str_content}")
-                        premium_report_download_parts.append(f"## {title}\n\n错误：{module_str_content}\n\n---\n")
-                        all_modules_valid = False
-                    elif module_str_content == "此模块内容未能成功加载。":
-                         st.info(f"'{title}' 模块内容当前为空或未成功获取。")
-                         premium_report_download_parts.append(f"## {title}\n\n此模块内容未能成功加载。\n\n---\n")
-                         all_modules_valid = False
-                    else:
-                        st.markdown(f"<div class='report-content'>{module_str_content}</div>", unsafe_allow_html=True)
-                        premium_report_download_parts.append(f"## {title}\n\n{module_str_content}\n\n---\n")
-            
-            if not modules_to_show or not all_modules_valid: 
-                 if not st.session_state.get("premium_generation_error_shown_globally", False):
-                    st.warning("部分或全部付费报告模块未能成功生成，请检查各模块内容。如果问题持续，请重试或联系支持。")
-                    st.session_state.premium_generation_error_shown_globally = True 
-            else:
-                if "premium_generation_error_shown_globally" in st.session_state:
-                    del st.session_state.premium_generation_error_shown_globally
+                if is_error_content:
+                    st.error(f"抱歉，'{title}' 模块内容生成时出错或未能加载：\n{module_str_content}")
+                    premium_report_download_parts.append(f"## {title}\n\n错误：{module_str_content}\n\n---\n")
+                    all_modules_valid = False
+                elif module_str_content == "此模块内容未能成功加载。":
+                     st.info(f"'{title}' 模块内容当前为空或未成功获取。")
+                     premium_report_download_parts.append(f"## {title}\n\n此模块内容未能成功加载。\n\n---\n")
+                     all_modules_valid = False
+                else:
+                    st.markdown(f"<div class='report-content'>{module_str_content}</div>", unsafe_allow_html=True)
+                    premium_report_download_parts.append(f"## {title}\n\n{module_str_content}\n\n---\n")
+        
+        if not modules_to_show or not all_modules_valid: 
+             if not st.session_state.get("premium_generation_error_shown_globally", False):
+                st.warning("部分或全部报告模块未能成功生成，请检查各模块内容。如果问题持续，请重试或联系支持。")
+                st.session_state.premium_generation_error_shown_globally = True 
+        else:
+            if "premium_generation_error_shown_globally" in st.session_state:
+                del st.session_state.premium_generation_error_shown_globally
 
 
-            content_for_download = "".join(premium_report_download_parts).strip() + download_file_footer.strip()
+        content_for_download = "".join(premium_report_download_parts).strip() + download_file_footer.strip()
 
         if content_for_download:
             current_utc_time = datetime.now(pytz.utc)
@@ -527,10 +599,7 @@ if st.session_state.get('report_generated_successfully', False):
                 use_container_width=True 
             )
     else:
-        # This message will show if report is not yet generated. 
-        # Since inputs are now at the top, this might be less necessary, 
-        # or could be rephrased. For now, keeping it.
-        st.info("请在上方填写您的信息并点击“生成报告”以查看结果。") # Updated wording
+        st.info("请在上方填写您的信息并点击“生成报告”以查看结果。") 
 
 st.markdown("---")
 st.markdown(
