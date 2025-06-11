@@ -68,6 +68,100 @@ class DeepSeekBaziReport:
             "酉": ["辛"], "戌": ["戊", "辛", "丁"], "亥": ["壬", "甲"]
         }
 
+        # NEW: Ten God relations mapping
+        # Keys are Day Master (日主), values are dictionaries mapping other Gan to Ten Gods
+        # 【修改点1：新增 gan_relations 字典】
+        self.gan_relations = {
+            "甲": {"甲": "比肩", "乙": "劫财", "丙": "食神", "丁": "伤官", "戊": "偏财",
+                   "己": "正财", "庚": "七杀", "辛": "正官", "壬": "偏印", "癸": "正印"},
+            "乙": {"甲": "劫财", "乙": "比肩", "丙": "伤官", "丁": "食神", "戊": "正财",
+                   "己": "偏财", "庚": "正官", "辛": "七杀", "壬": "正印", "癸": "偏印"},
+            "丙": {"甲": "偏印", "乙": "正印", "丙": "比肩", "丁": "劫财", "戊": "食神",
+                   "己": "伤官", "庚": "偏财", "辛": "正财", "壬": "七杀", "癸": "正官"},
+            "丁": {"甲": "正印", "乙": "偏印", "丙": "劫财", "丁": "比肩", "戊": "伤官",
+                   "己": "食神", "庚": "正财", "辛": "偏财", "壬": "正官", "癸": "七杀"},
+            "戊": {"甲": "七杀", "乙": "正官", "丙": "偏印", "丁": "正印", "戊": "比肩",
+                   "己": "劫财", "庚": "食神", "辛": "伤官", "壬": "偏财", "癸": "正财"},
+            "己": {"甲": "正官", "乙": "七杀", "丙": "正印", "丁": "偏印", "戊": "劫财",
+                   "己": "比肩", "庚": "伤官", "辛": "食神", "壬": "正财", "癸": "偏财"},
+            "庚": {"甲": "偏财", "乙": "正财", "丙": "七杀", "丁": "正官", "戊": "偏印",
+                   "己": "正印", "庚": "比肩", "辛": "劫财", "壬": "食神", "癸": "伤官"},
+            "辛": {"甲": "正财", "乙": "偏财", "丙": "正官", "丁": "七杀", "戊": "正印",
+                   "己": "偏印", "庚": "劫财", "辛": "比肩", "壬": "伤官", "癸": "食神"},
+            "壬": {"甲": "食神", "乙": "伤官", "丙": "偏财", "丁": "正财", "戊": "七杀",
+                   "己": "正官", "庚": "偏印", "辛": "正印", "壬": "比肩", "癸": "劫财"},
+            "癸": {"甲": "伤官", "乙": "食神", "丙": "正财", "丁": "偏财", "戊": "正官",
+                   "己": "七杀", "庚": "正印", "辛": "偏印", "壬": "劫财", "癸": "比肩"}
+        }
+
+    # 【修改点2：新增 _get_ten_god 方法】
+    def _get_ten_god(self, day_master: str, other_gan: str) -> str:
+        """
+        根据日主和另一个天干，返回对应的十神。
+        """
+        if day_master not in self.gan_relations or other_gan not in self.gan_relations[day_master]:
+            return "未知"
+        return self.gan_relations[day_master][other_gan]
+
+    # 【修改点3：新增 _calculate_ten_gods_for_bazi 方法】
+    def _calculate_ten_gods_for_bazi(self, bazi_str: str) -> Dict[str, Dict[str, str]]:
+        """
+        计算八字四柱的十神，包括地支藏干。
+        bazi_str 格式: "年柱: 甲子 | 月柱: 乙丑 | 日柱: 丙寅 | 时柱: 丁卯"
+        """
+        pillars = bazi_str.split(' | ')
+        year_pillar = pillars[0].split(':')[1].strip()
+        month_pillar = pillars[1].split(':')[1].strip()
+        day_pillar = pillars[2].split(':')[1].strip()
+        hour_pillar = pillars[3].split(':')[1].strip()
+
+        day_master = day_pillar[0] # 日主是日柱的天干
+
+        ten_gods_info = {}
+
+        # 1. 天干十神 (明十神)
+        ten_gods_info["年干"] = self._get_ten_god(day_master, year_pillar[0])
+        ten_gods_info["月干"] = self._get_ten_god(day_master, month_pillar[0])
+        ten_gods_info["日干"] = "日主" # 日主本身没有十神，是参照点
+        ten_gods_info["时干"] = self._get_ten_god(day_master, hour_pillar[0])
+
+        # 2. 地支藏干十神 (暗十神)
+        hidden_stems_ten_gods = {
+            "年支藏干": {},
+            "月支藏干": {},
+            "日支藏干": {},
+            "时支藏干": {}
+        }
+        
+        # Helper to process a single branch's hidden stems
+        def process_branch_hidden_stems(branch: str, pillar_key: str):
+            if branch in self.zhi_hidden_stems:
+                for hs in self.zhi_hidden_stems[branch]:
+                    hidden_stems_ten_gods[pillar_key][hs] = self._get_ten_god(day_master, hs)
+            else:
+                hidden_stems_ten_gods[pillar_key] = {"无藏干或未知": "无"} # Fallback
+
+        process_branch_hidden_stems(year_pillar[1], "年支藏干")
+        process_branch_hidden_stems(month_pillar[1], "月支藏干")
+        process_branch_hidden_stems(day_pillar[1], "日支藏干")
+        process_branch_hidden_stems(hour_pillar[1], "时支藏干")
+
+        ten_gods_info["地支藏干"] = hidden_stems_ten_gods
+        
+        # Format for prompt:
+        formatted_ten_gods = f"日主 ({day_master})\n"
+        formatted_ten_gods += f"年干十神: {ten_gods_info['年干']}\n"
+        formatted_ten_gods += f"月干十神: {ten_gods_info['月干']}\n"
+        formatted_ten_gods += f"时干十神: {ten_gods_info['时干']}\n"
+        formatted_ten_gods += "地支藏干十神:\n"
+        for pillar, h_stems in ten_gods_info['地支藏干'].items():
+            formatted_ten_gods += f"  {pillar}:\n"
+            for hs_gan, hs_tg in h_stems.items():
+                formatted_ten_gods += f"    - {hs_gan}: {hs_tg}\n"
+
+        return {"day_master": day_master, "formatted_string": formatted_ten_gods}
+
+
     async def _call_deepseek_api_async(self, prompt: str, model: str = "deepseek-chat", temperature: float = 0.7) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -226,10 +320,20 @@ class DeepSeekBaziReport:
 
     # Premium modules will now be async and accept core_bazi_summary
     async def generate_bazi_analysis_module_async(self, bazi_str: str, gender: str, age_info: str) -> str:
+        # 【修改点4：在 generate_bazi_analysis_module_async 中计算并注入十神信息】
+        ten_gods_data = self._calculate_ten_gods_for_bazi(bazi_str)
+        day_master = ten_gods_data["day_master"]
+        formatted_ten_gods = ten_gods_data["formatted_string"]
+
         prompt = f"""
             ### 八字排盘与五行分析
 
             针对八字：{bazi_str}，性别：{gender}，年龄: {age_info}。
+            日主: {day_master}
+            以下是根据八字计算出的十神信息，请务必参考这些信息进行分析：
+            ```
+            {formatted_ten_gods}
+            ```
             
             **重要提示：** 请您在撰写此模块时，采用娓娓道来的叙述风格。同时要尽量做到客观，不要只输出好的方面，也要有坏的提醒。对于以下列出的每一个主要分析点（如“1. 四柱干支”、“2. 五行力量分析”等）及其内部的子项（若有），请不要只是简单罗列信息。而是针对每一项，都用3到5句完整且连贯的句子组成一个流畅的小段落进行深入浅出的阐释。您的目标是让即使不熟悉八字命理的读者也能轻松理解各项分析的含义、逻辑及其对命主的影响。请保持专业的分析深度，同时确保语言通俗易懂。请直接以这样的叙述方式填充各个要点，并使用Markdown格式化您的输出，包括标题和必要的强调。
 
@@ -247,8 +351,8 @@ class DeepSeekBaziReport:
                 *   接着，请用3-5句完整连贯的话，深入分析这些五行之间存在的相生（如木生火、火生土）与相克（如金克木、水克火）关系，是如何具体地影响整个命局的平衡状态与核心特质的，这些互动又怎样塑造了命主的整体运势走向。
 
             3.  **十神关系详察**：
-                *   请首先列出此八字四柱地支中所藏匿的天干（包括本气、中气、余气），并根据日主（日干），清晰标示出命盘天干上透出的主要十神（十神判断要确保准确性）以及地支藏干在特定条件下可能引化出的十神。
-                *   然后，请用3-5句完整连贯的话，挑选其中一至两个对命局影响最为显著的十神，阐述它们各自代表的人事物象（例如，正官可能代表上司、约束力或事业，食神可能代表才华、口福或晚辈），以及它们的存在如何影响命主的性格特点和人生际遇。
+                *   请根据上述提供的十神信息，用3-5句完整连贯的话，挑选其中一至两个对命局影响最为显著的十神，阐述它们各自代表的人事物象（例如，正官可能代表上司、约束力或事业，食神可能代表才华、口福或晚辈），以及它们的存在如何影响命主的性格特点和人生际遇。
+                *   请务必结合提供的十神信息，如“年干十神”、“月干十神”、“时干十神”以及“地支藏干十神”进行准确分析。
 
             4.  **喜用神初步研判**：
                 *   请用3-5句完整连贯的话，综合考量日主的强弱旺衰（是身强还是身弱）以及命局中五行的整体平衡流通情况，初步判断出此命局最需要或最喜爱的五行（即喜用神）是什么。
@@ -259,10 +363,20 @@ class DeepSeekBaziReport:
         return await self._call_deepseek_api_async(prompt)
 
     async def generate_mingge_decode_module_async(self, bazi_str: str, gender: str, age_info: str, core_bazi_summary: str) -> str:
+        # 【修改点5：在 generate_mingge_decode_module_async 中计算并注入十神信息】
+        ten_gods_data = self._calculate_ten_gods_for_bazi(bazi_str)
+        day_master = ten_gods_data["day_master"]
+        formatted_ten_gods = ten_gods_data["formatted_string"]
+
         prompt = f"""
             ### 命格解码与人生特质
             
             针对八字：{bazi_str}，性别：{gender}，年龄: {age_info}。
+            日主: {day_master}
+            以下是根据八字计算出的十神信息，请务必参考这些信息进行分析：
+            ```
+            {formatted_ten_gods}
+            ```
             
             **核心命理基础：**
             {core_bazi_summary}
@@ -295,11 +409,21 @@ class DeepSeekBaziReport:
 
     # NEW: Split career and love into two separate modules
     async def generate_career_wealth_module_async(self, bazi_str: str, gender: str, age_info: str, core_bazi_summary: str) -> str:
+        # 【修改点6：在 generate_career_wealth_module_async 中计算并注入十神信息】
+        ten_gods_data = self._calculate_ten_gods_for_bazi(bazi_str)
+        day_master = ten_gods_data["day_master"]
+        formatted_ten_gods = ten_gods_data["formatted_string"]
+
         prompt = f"""
             ### 事业财富分析
             
             针对八字：{bazi_str}，性别：{gender}，年龄: {age_info}。
-            
+            日主: {day_master}
+            以下是根据八字计算出的十神信息，请务必参考这些信息进行分析：
+            ```
+            {formatted_ten_gods}
+            ```
+
             **核心命理基础：**
             {core_bazi_summary}
 
@@ -308,7 +432,7 @@ class DeepSeekBaziReport:
             请详细分析事业财富：
             
             1.  **优势行业与职业方向指引**：
-                *   请用3-5句完整连贯的话，根据此八字的五行喜用（即命局所喜的五行元素）以及显著的十神特性（例如，若食伤生财明显，可能适合创意或技艺求财；若官印相生，可能适合管理或学术领域），为命主建议一些相对更有利或更容易获得发展的行业领域。
+                *   请用3-5句完整连贯的话，根据此八字的五行喜用（即命局所喜的五行元素）以及显著的十神特性（例如，若食伤生财明显，可能适合创意或技艺求财；若官印相生，可能适合管理或学术领域），为命主建议一些相对更有利或更容易获得发展的行业领域。请务必结合提供的十神信息进行分析。
                 *   接着，请用3-5句完整连贯的话，进一步分析并指出命主较为适合的职业发展方向或岗位类型，例如是偏向技术研发、市场营销、教育文化、还是自主经营等，并简述理由。
 
             2.  **事业发展模式与机遇前瞻**：
@@ -316,7 +440,7 @@ class DeepSeekBaziReport:
                 *   同时，请用3-5句完整连贯的话，基于命局特点，预测命主在事业发展过程中可能会遇到的典型机遇（例如某个时期易得提拔）和需要留意的潜在阻碍或挑战（例如某个阶段易犯小人）。
 
             3.  **财富能量评估与求财之道**：
-                *   请用3-5句完整连贯的话，评估命主天生的财富能量（例如正财运稳健还是偏财运突出，或者财库情况如何），并分析其在金钱观念和理财习惯上可能表现出的特点。
+                *   请用3-5句完整连贯的话，评估命主天生的财富能量（例如正财运稳健还是偏财运突出，或者财库情况如何），并分析其在金钱观念和理财习惯上可能表现出的特点。请务必结合提供的十神信息进行分析。
                 *   随后，请用3-5句完整连贯的话，为命主提供一些符合其命格特性的求财建议和积累财富的策略方向，例如是宜稳健投资还是可适度冒险，是靠专业技能还是人脉资源等。
 
             4.  **事业贵人类型与提点**：
@@ -327,11 +451,21 @@ class DeepSeekBaziReport:
         return await self._call_deepseek_api_async(prompt)
 
     async def generate_love_marriage_module_async(self, bazi_str: str, gender: str, age_info: str, core_bazi_summary: str) -> str:
+        # 【修改点7：在 generate_love_marriage_module_async 中计算并注入十神信息】
+        ten_gods_data = self._calculate_ten_gods_for_bazi(bazi_str)
+        day_master = ten_gods_data["day_master"]
+        formatted_ten_gods = ten_gods_data["formatted_string"]
+
         prompt = f"""
             ### 婚恋情感分析
             
             针对八字：{bazi_str}，性别：{gender}，年龄: {age_info}。
-            
+            日主: {day_master}
+            以下是根据八字计算出的十神信息，请务必参考这些信息进行分析：
+            ```
+            {formatted_ten_gods}
+            ```
+
             **核心命理基础：**
             {core_bazi_summary}
 
@@ -340,7 +474,7 @@ class DeepSeekBaziReport:
             请详细探索婚恋情感：
             
             1.  **婚恋观念剖析与择偶偏好**：
-                *   请用3-5句完整连贯的话，深入分析命主在婚恋关系中可能持有的核心观念，例如是更向往浪漫激情、注重现实条件、渴望精神共鸣还是追求平淡安稳。
+                *   请用3-5句完整连贯的话，深入分析命主在婚恋关系中可能持有的核心观念，例如是更向往浪漫激情、注重现实条件、渴望精神共鸣还是追求平淡安稳。请务必结合提供的十神信息，尤其是与感情、配偶相关的十神（如正官、七杀、正财、偏财、食神、伤官等）进行分析。
                 *   接着，请用3-5句完整连贯的话，具体描述命主在选择伴侣时，内心深处可能会比较看重对方具备哪些条件或特质，例如外貌、才华、经济实力、性格相投或是家庭背景等。
 
             2.  **情感互动模式与沟通特点**：
@@ -348,7 +482,7 @@ class DeepSeekBaziReport:
                 *   同时，请用3-5句完整连贯的话，分析命主在情感关系中可能存在的优点（如忠诚、善解人意）以及需要特别注意的沟通问题或潜在的相处模式挑战。
 
             3.  **未来伴侣信息初探 (若命局信息较为明显)**：
-                *   请用3-5句完整连贯的话，根据命盘中的夫妻宫（通常是日支）的状态以及代表配偶的星神（男命看财星，女命看官杀星）的旺衰喜忌等信息，初步推断未来伴侣可能具备的某些较为明显的特征（如大致的性格倾向、能力范围、外形感觉等），或可能的相识途径与缘分时机。 （若信息不明显，可说明难以具体判断）
+                *   请用3-5句完整连贯的话，根据命盘中的夫妻宫（通常是日支）的状态以及代表配偶的星神（男命看财星，女命看官杀星）的旺衰喜忌等信息，初步推断未来伴侣可能具备的某些较为明显的特征（如大致的性格倾向、能力范围、外形感觉等），或可能的相识途径与缘分时机。请务必结合提供的十神信息进行分析。 （若信息不明显，可说明难以具体判断）
 
             4.  **婚恋顺利度评估与经营建议**：
                 *   请用3-5句完整连贯的话，综合评估命主婚恋过程的大致顺利程度，并指出在感情道路上可能遇到的典型情感波折、考验或需要经营的方面。
@@ -360,11 +494,21 @@ class DeepSeekBaziReport:
 
 
     async def generate_health_advice_module_async(self, bazi_str: str, gender: str, age_info: str, core_bazi_summary: str) -> str:
+        # 【修改点8：在 generate_health_advice_module_async 中计算并注入十神信息】
+        ten_gods_data = self._calculate_ten_gods_for_bazi(bazi_str)
+        day_master = ten_gods_data["day_master"]
+        formatted_ten_gods = ten_gods_data["formatted_string"]
+
         prompt = f"""
             ### 五行健康与养生建议
             
             针对八字：{bazi_str}，性别：{gender}，年龄: {age_info}。
-            
+            日主: {day_master}
+            以下是根据八字计算出的十神信息，请务必参考这些信息进行分析：
+            ```
+            {formatted_ten_gods}
+            ```
+
             **核心命理基础：**
             {core_bazi_summary}
 
@@ -373,7 +517,7 @@ class DeepSeekBaziReport:
             请详细分析以下内容：
             
             1.  **五行对应脏腑健康状态分析**：
-                *   请用3-5句完整连贯的话，根据此八字初步分析与各五行相对应的主要脏腑（例如金对应肺与大肠，木对应肝与胆，水对应肾与膀胱，火对应心与小肠，土对应脾与胃）潜在的健康状况或能量水平。
+                *   请用3-5句完整连贯的话，根据此八字初步分析与各五行相对应的主要脏腑（例如金对应肺与大肠，木对应肝与胆，水对应肾与膀胱，火对应心与小肠，土对应脾与胃）潜在的健康状况或能量水平。请务必结合提供的十神信息和五行强弱进行分析。
                 *   接着，请用3-5句完整连贯的话，具体指出哪些脏腑的功能在本命局中可能表现得相对强健有力，而哪些脏腑又可能显得相对薄弱，或者更容易在特定条件下出现失衡或不适的问题。
 
             2.  **体质基本特点与易感病症提示**：
@@ -383,7 +527,7 @@ class DeepSeekBaziReport:
             3.  **个性化养生调理方案建议**：
                 *   **饮食调养**: 请用3-5句完整连贯的话，针对命局的五行特点（例如，若某五行过弱则需补益，过旺则需疏泄），提出一些具体的饮食宜忌。例如，建议多食用哪些五行属性的食物来补益相应的脏腑，或者避免哪些食物以免加重失衡。
                 *   **作息与运动**: 请用3-5句完整连贯的话，结合命主的能量特点和五行喜忌，为其推荐一些较为适合的作息规律（例如早睡早起，或根据季节调整）和运动方式（例如是适合瑜伽、太极等静态运动，还是跑步、游泳等动态运动，或是需要动静结合）。
-                *   **情绪疏导与压力管理**: 请用3-5句完整连贯的话，结合命主的性格特质和潜在的情绪模式（例如易怒、易忧思等），提出一些有助于其保持身心平衡、有效疏导负面情绪和缓解生活压力的方法建议。
+                *   **情绪疏导与压力管理**: 请用3-5句完整连贯的话，结合命主的性格特质和潜在的情绪模式（例如易怒、易忧思等），提出一些有助于其保持身心平衡、有效疏导负面情绪和缓解生活压力的方法建议。请务必结合提供的十神信息进行分析。
 
             4.  **有利方位选择与生活环境调整参考**：
                 *   请用3-5句完整连贯的话，根据命局的五行喜用神，为命主在选择居住方位、工作学习方位时提供一些参考建议，指出哪些方向可能对其身心健康和整体能量状态更为有利。
@@ -409,11 +553,21 @@ class DeepSeekBaziReport:
         # e.g., 2029年02月11日(6.2) 起运
         dayun_start_info_line = dayun_calc_result['起运信息']['第二步大运开始的起运日期和精确虚岁']
         
+        # 【修改点9：在 generate_fortune_flow_module_async 中计算并注入十神信息】
+        ten_gods_data = self._calculate_ten_gods_for_bazi(bazi_str)
+        day_master = ten_gods_data["day_master"]
+        formatted_ten_gods = ten_gods_data["formatted_string"]
+
         # Use the passed age_info directly in the prompt
         prompt = f"""
             ### 大运流年运势推演
 
             针对八字：{bazi_str}，性别：{gender}， 年龄: {age_info}。
+            日主: {day_master}
+            以下是根据八字计算出的十神信息，请务必参考这些信息进行分析：
+            ```
+            {formatted_ten_gods}
+            ```
             出生日期：{dayun_calc_result['出生日期']}
             {dayun_start_info_line}
             大运列表:
@@ -431,7 +585,7 @@ class DeepSeekBaziReport:
                 *   请结合上面提供的大运列表，指出命主从几岁开始进入第一步大运，并解释这个起运岁数是如何影响人生阶段划分的。
 
             2.  **未来1-2步大运趋势简析 (每步大运10年)**：
-                *   对于命主即将进入或正在经历的第一步（或下一两步）大运，请列出其天干地支。然后，请用3-5句完整连贯的话，分析这组干支是如何与原命局发生作用的，例如它会增强或削弱原局中的哪些五行力量，或者引动哪些十神。
+                *   对于命主即将进入或正在经历的第一步（或下一两步）大运，请列出其天干地支。然后，请用3-5句完整连贯的话，分析这组干支是如何与原命局发生作用的，例如它会增强或削弱原局中的哪些五行力量，或者引动哪些十神。请务必结合提供的十神信息进行分析。
                 *   接着，请用3-5句完整连贯的话，进一步阐述在这一步大运的十年期间，命主在事业发展、财富积累、感情生活、身体健康等主要人生方面，可能会经历怎样的总体吉凶趋势、生活重心变化或重要的发展机遇与挑战。 （若分析两步大运，请分别阐述）
 
             3.  **未来5年流年运势关注点提示**：
