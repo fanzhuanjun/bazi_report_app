@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 # --- DeepSeek API Key 配置 ---
-api_key = "sk-392daa9410c7429fa9be75e49049a4ec" # 请替换为您的有效API Key
+api_key = "sk-537f71b3f5294a8696610aefa4a9423a" # 请替换为您的有效API Key
 
 # --- Custom CSS for Beautification ---
 custom_css = """
